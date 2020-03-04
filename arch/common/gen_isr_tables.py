@@ -41,7 +41,7 @@ def endian_prefix():
     else:
         return "<"
 
-def read_intlist(intlist_path):
+def read_intlist(intlist_path, syms):
     """read a binary file containing the contents of the kernel's .intList
     section. This is an instance of a header created by
     include/linker/intlist.ld:
@@ -71,7 +71,10 @@ def read_intlist(intlist_path):
     prefix = endian_prefix()
 
     intlist_header_fmt = prefix + "II"
-    intlist_entry_fmt = prefix + "iiII"
+    if "CONFIG_64BIT" in syms:
+        intlist_entry_fmt = prefix + "iiQQ"
+    else:
+        intlist_entry_fmt = prefix + "iiII"
 
     with open(intlist_path, "rb") as fp:
         intdata = fp.read()
@@ -102,8 +105,8 @@ def read_intlist(intlist_path):
 def parse_args():
     global args
 
-    parser = argparse.ArgumentParser(description = __doc__,
-            formatter_class = argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(description=__doc__,
+            formatter_class=argparse.RawDescriptionHelpFormatter)
 
     parser.add_argument("-e", "--big-endian", action="store_true",
             help="Target encodes data in big-endian format (little endian is "
@@ -161,7 +164,7 @@ def write_source_file(fp, vt, swt, intlist, syms):
 
     for i in range(nv):
         param, func = swt[i]
-        if type(func) is int:
+        if isinstance(func, int):
             func_as_string = "{0:#x}".format(func)
         else:
             func_as_string = func
@@ -220,9 +223,12 @@ def main():
 
                 debug('3rd level offsets: {}'.format(list_3rd_lvl_offsets))
 
-    intlist = read_intlist(args.intlist)
+    intlist = read_intlist(args.intlist, syms)
     nvec = intlist["num_vectors"]
     offset = intlist["offset"]
+
+    if nvec > pow(2, 15):
+        raise ValueError('nvec is too large, check endianness.')
 
     spurious_handler = "&z_irq_spurious"
     sw_irq_handler   = "ISR_WRAPPER"
@@ -297,7 +303,9 @@ def main():
                     table_index = irq1 - offset
 
             if swt[table_index] != (0, spurious_handler):
-                error("multiple registrations at table_index %d for irq %d (0x%x)" % (table_index, irq, irq))
+                error(f"multiple registrations at table_index {table_index} for irq {irq} (0x{irq:x})"
+                      + "\nHas IRQ_CONNECT or IRQ_DIRECT_CONNECT accidentally been invoked on the same irq multiple times?"
+                )
 
             swt[table_index] = (param, func)
 

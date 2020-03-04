@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <spi.h>
+#include <drivers/spi.h>
 #include <nrfx_spis.h>
 
 #define LOG_DOMAIN "spi_nrfx_spis"
@@ -144,10 +144,14 @@ static void prepare_for_transfer(struct device *dev)
 static int transceive(struct device *dev,
 		      const struct spi_config *spi_cfg,
 		      const struct spi_buf_set *tx_bufs,
-		      const struct spi_buf_set *rx_bufs)
+		      const struct spi_buf_set *rx_bufs,
+		      bool asynchronous,
+		      struct k_poll_signal *signal)
 {
 	struct spi_nrfx_data *dev_data = get_dev_data(dev);
 	int error;
+
+	spi_context_lock(&dev_data->ctx, asynchronous, signal);
 
 	error = configure(dev, spi_cfg);
 	if (error != 0) {
@@ -178,8 +182,7 @@ static int spi_nrfx_transceive(struct device *dev,
 			       const struct spi_buf_set *tx_bufs,
 			       const struct spi_buf_set *rx_bufs)
 {
-	spi_context_lock(&get_dev_data(dev)->ctx, false, NULL);
-	return transceive(dev, spi_cfg, tx_bufs, rx_bufs);
+	return transceive(dev, spi_cfg, tx_bufs, rx_bufs, false, NULL);
 }
 
 #ifdef CONFIG_SPI_ASYNC
@@ -189,8 +192,7 @@ static int spi_nrfx_transceive_async(struct device *dev,
 				     const struct spi_buf_set *rx_bufs,
 				     struct k_poll_signal *async)
 {
-	spi_context_lock(&get_dev_data(dev)->ctx, true, async);
-	return transceive(dev, spi_cfg, tx_bufs, rx_bufs);
+	return transceive(dev, spi_cfg, tx_bufs, rx_bufs, true, async);
 }
 #endif /* CONFIG_SPI_ASYNC */
 
@@ -251,7 +253,7 @@ static int init_spis(struct device *dev, const nrfx_spis_config_t *config)
 	static int spi_##idx##_init(struct device *dev)			       \
 	{								       \
 		IRQ_CONNECT(NRFX_IRQ_NUMBER_GET(NRF_SPIS##idx),		       \
-			    DT_NORDIC_NRF_SPIS_SPI_##idx##_IRQ_PRIORITY,       \
+			    DT_NORDIC_NRF_SPIS_SPI_##idx##_IRQ_0_PRIORITY,     \
 			    nrfx_isr, nrfx_spis_##idx##_irq_handler, 0);       \
 		const nrfx_spis_config_t config = {			       \
 			.sck_pin    = DT_NORDIC_NRF_SPIS_SPI_##idx##_SCK_PIN,  \
@@ -260,8 +262,8 @@ static int init_spis(struct device *dev, const nrfx_spis_config_t *config)
 			.csn_pin    = DT_NORDIC_NRF_SPIS_SPI_##idx##_CSN_PIN,  \
 			.mode       = NRF_SPIS_MODE_0,			       \
 			.bit_order  = NRF_SPIS_BIT_ORDER_MSB_FIRST,	       \
-			.csn_pullup = NRFX_SPIS_DEFAULT_CSN_PULLUP,	       \
-			.miso_drive = NRFX_SPIS_DEFAULT_MISO_DRIVE,	       \
+			.csn_pullup = NRF_GPIO_PIN_NOPULL,		       \
+			.miso_drive = NRF_GPIO_PIN_S0S1,		       \
 			.orc        = CONFIG_SPI_##idx##_NRF_ORC,	       \
 			.def        = DT_NORDIC_NRF_SPIS_SPI_##idx##_DEF_CHAR, \
 		};							       \

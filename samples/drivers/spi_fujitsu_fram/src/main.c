@@ -6,9 +6,9 @@
 
 #include <errno.h>
 #include <zephyr.h>
-#include <misc/printk.h>
+#include <sys/printk.h>
 #include <device.h>
-#include <spi.h>
+#include <drivers/spi.h>
 
 /**
  * @file Sample app using the Fujitsu MB85RS64V FRAM through SPI.
@@ -143,7 +143,7 @@ void main(void)
 
 	printk("fujitsu FRAM example application\n");
 
-	spi = device_get_binding(DT_SPI_1_NAME);
+	spi = device_get_binding(DT_ALIAS_SPI_1_LABEL);
 	if (!spi) {
 		printk("Could not find SPI driver\n");
 		return;

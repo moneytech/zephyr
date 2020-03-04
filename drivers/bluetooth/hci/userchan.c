@@ -9,8 +9,8 @@
 #include <zephyr.h>
 #include <device.h>
 #include <init.h>
-#include <misc/util.h>
-#include <misc/byteorder.h>
+#include <sys/util.h>
+#include <sys/byteorder.h>
 
 #include <errno.h>
 #include <stddef.h>
@@ -26,7 +26,7 @@
 
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/hci.h>
-#include <bluetooth/hci_driver.h>
+#include <drivers/bluetooth/hci_driver.h>
 
 #define BT_DBG_ENABLED IS_ENABLED(CONFIG_BT_DEBUG_HCI_DRIVER)
 #define LOG_MODULE_NAME bt_driver
@@ -57,16 +57,11 @@ static int bt_dev_index = -1;
 
 static struct net_buf *get_rx(const u8_t *buf)
 {
-	if (buf[0] == H4_EVT && (buf[1] == BT_HCI_EVT_CMD_COMPLETE ||
-				 buf[1] == BT_HCI_EVT_CMD_STATUS)) {
-		return bt_buf_get_cmd_complete(K_FOREVER);
+	if (buf[0] == H4_EVT) {
+		return bt_buf_get_evt(buf[1], false, K_FOREVER);
 	}
 
-	if (buf[0] == H4_ACL) {
-		return bt_buf_get_rx(BT_BUF_ACL_IN, K_FOREVER);
-	} else {
-		return bt_buf_get_rx(BT_BUF_EVT, K_FOREVER);
-	}
+	return bt_buf_get_rx(BT_BUF_ACL_IN, K_FOREVER);
 }
 
 static bool uc_ready(void)

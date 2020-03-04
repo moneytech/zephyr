@@ -231,11 +231,97 @@ static inline struct net_if *get_iface(struct eth_context *ctx,
 #endif
 }
 
+#if defined(CONFIG_NET_VLAN)
+static struct net_pkt *prepare_vlan_pkt(struct eth_context *ctx,
+					int count, u16_t *vlan_tag, int *status)
+{
+	struct net_eth_vlan_hdr *hdr = (struct net_eth_vlan_hdr *)ctx->recv;
+	struct net_pkt *pkt;
+	u8_t pos;
+
+	if (IS_ENABLED(CONFIG_ETH_NATIVE_POSIX_VLAN_TAG_STRIP)) {
+		count -= NET_ETH_VLAN_HDR_SIZE;
+	}
+
+	pkt = net_pkt_rx_alloc_with_buffer(ctx->iface, count,
+					   AF_UNSPEC, 0, NET_BUF_TIMEOUT);
+	if (!pkt) {
+		*status = -ENOMEM;
+		return NULL;
+	}
+
+	net_pkt_set_vlan_tci(pkt, ntohs(hdr->vlan.tci));
+	*vlan_tag = net_pkt_vlan_tag(pkt);
+
+	pos = 0;
+
+	if (IS_ENABLED(CONFIG_ETH_NATIVE_POSIX_VLAN_TAG_STRIP)) {
+		if (net_pkt_write(pkt, ctx->recv,
+				  2 * sizeof(struct net_eth_addr))) {
+			goto error;
+		}
+
+		pos = (2 * sizeof(struct net_eth_addr)) + NET_ETH_VLAN_HDR_SIZE;
+		count -= (2 * sizeof(struct net_eth_addr));
+	}
+
+	if (net_pkt_write(pkt, ctx->recv + pos, count)) {
+		goto error;
+	}
+
+#if CONFIG_NET_TC_RX_COUNT > 1
+	{
+		enum net_priority prio;
+
+		prio = net_vlan2priority(net_pkt_vlan_priority(pkt));
+		net_pkt_set_priority(pkt, prio);
+	}
+#endif
+
+	*status = 0;
+
+	LOG_DBG("Recv pkt %p len %d", pkt, count);
+
+	return pkt;
+
+error:
+	net_pkt_unref(pkt);
+	*status = -ENOBUFS;
+	return NULL;
+}
+#endif
+
+static struct net_pkt *prepare_non_vlan_pkt(struct eth_context *ctx,
+					    int count, int *status)
+{
+	struct net_pkt *pkt;
+
+	pkt = net_pkt_rx_alloc_with_buffer(ctx->iface, count,
+					   AF_UNSPEC, 0, NET_BUF_TIMEOUT);
+	if (!pkt) {
+		*status = -ENOMEM;
+		return NULL;
+	}
+
+	if (net_pkt_write(pkt, ctx->recv, count)) {
+		net_pkt_unref(pkt);
+		*status = -ENOBUFS;
+		return NULL;
+	}
+
+	*status = 0;
+
+	LOG_DBG("Recv pkt %p len %d", pkt, count);
+
+	return pkt;
+}
+
 static int read_data(struct eth_context *ctx, int fd)
 {
 	u16_t vlan_tag = NET_VLAN_TAG_UNSPEC;
 	struct net_if *iface;
-	struct net_pkt *pkt;
+	struct net_pkt *pkt = NULL;
+	int status;
 	int count;
 
 	count = eth_read_data(fd, ctx->recv, sizeof(ctx->recv));
@@ -243,42 +329,34 @@ static int read_data(struct eth_context *ctx, int fd)
 		return 0;
 	}
 
-	pkt = net_pkt_rx_alloc_with_buffer(ctx->iface, count,
-					   AF_UNSPEC, 0, NET_BUF_TIMEOUT);
-	if (!pkt) {
-		return -ENOMEM;
-	}
-
-	if (net_pkt_write(pkt, ctx->recv, count)) {
-		return -ENOBUFS;
-	}
-
 #if defined(CONFIG_NET_VLAN)
 	{
-		struct net_eth_hdr *hdr = NET_ETH_HDR(pkt);
+		struct net_eth_hdr *hdr = (struct net_eth_hdr *)(ctx->recv);
 
 		if (ntohs(hdr->type) == NET_ETH_PTYPE_VLAN) {
-			struct net_eth_vlan_hdr *hdr_vlan =
-				(struct net_eth_vlan_hdr *)NET_ETH_HDR(pkt);
+			pkt = prepare_vlan_pkt(ctx, count, &vlan_tag, &status);
+			if (!pkt) {
+				return status;
+			}
+		} else {
+			pkt = prepare_non_vlan_pkt(ctx, count, &status);
+			if (!pkt) {
+				return status;
+			}
 
-			net_pkt_set_vlan_tci(pkt, ntohs(hdr_vlan->vlan.tci));
-			vlan_tag = net_pkt_vlan_tag(pkt);
+			net_pkt_set_vlan_tci(pkt, 0);
 		}
-
-#if CONFIG_NET_TC_RX_COUNT > 1
-		{
-			enum net_priority prio;
-
-			prio = net_vlan2priority(net_pkt_vlan_priority(pkt));
-			net_pkt_set_priority(pkt, prio);
+	}
+#else
+	{
+		pkt = prepare_non_vlan_pkt(ctx, count, &status);
+		if (!pkt) {
+			return status;
 		}
-#endif
 	}
 #endif
 
 	iface = get_iface(ctx, vlan_tag);
-
-	LOG_DBG("Recv pkt %p len %d", pkt, count);
 
 	update_gptp(iface, pkt, false);
 
@@ -291,17 +369,13 @@ static int read_data(struct eth_context *ctx, int fd)
 
 static void eth_rx(struct eth_context *ctx)
 {
-	int ret;
-
 	LOG_DBG("Starting ZETH RX thread");
 
 	while (1) {
 		if (net_if_is_up(ctx->iface)) {
-			ret = eth_wait_data(ctx->dev_fd);
-			if (!ret) {
+			while (!eth_wait_data(ctx->dev_fd)) {
 				read_data(ctx, ctx->dev_fd);
-			} else {
-				eth_stats_update_errors_rx(ctx->iface);
+				k_yield();
 			}
 		}
 
@@ -323,7 +397,12 @@ static void eth_iface_init(struct net_if *iface)
 	struct eth_context *ctx = net_if_get_device(iface)->driver_data;
 	struct net_linkaddr *ll_addr = eth_get_mac(ctx);
 
-	ctx->iface = iface;
+	/* The iface pointer in context should contain the main interface
+	 * if the VLANs are enabled.
+	 */
+	if (ctx->iface == NULL) {
+		ctx->iface = iface;
+	}
 
 	ethernet_init(iface);
 
@@ -384,6 +463,9 @@ enum ethernet_hw_caps eth_posix_native_get_capabilities(struct device *dev)
 	ARG_UNUSED(dev);
 
 	return ETHERNET_HW_VLAN
+#if defined(CONFIG_ETH_NATIVE_POSIX_VLAN_TAG_STRIP)
+		| ETHERNET_HW_VLAN_TAG_STRIP
+#endif
 #if defined(CONFIG_ETH_NATIVE_POSIX_PTP_CLOCK)
 		| ETHERNET_PTP
 #endif

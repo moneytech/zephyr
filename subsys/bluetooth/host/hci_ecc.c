@@ -10,9 +10,9 @@
  */
 
 #include <zephyr.h>
-#include <atomic.h>
-#include <misc/stack.h>
-#include <misc/byteorder.h>
+#include <sys/atomic.h>
+#include <debug/stack.h>
+#include <sys/byteorder.h>
 #include <tinycrypt/constants.h>
 #include <tinycrypt/utils.h>
 #include <tinycrypt/ecc.h>
@@ -21,7 +21,7 @@
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/conn.h>
 #include <bluetooth/hci.h>
-#include <bluetooth/hci_driver.h>
+#include <drivers/bluetooth/hci_driver.h>
 
 #define BT_DBG_ENABLED IS_ENABLED(CONFIG_BT_DEBUG_HCI_CORE)
 #define LOG_MODULE_NAME bt_hci_ecc
@@ -36,7 +36,7 @@
 #endif
 
 static struct k_thread ecc_thread_data;
-static K_THREAD_STACK_DEFINE(ecc_thread_stack, 1100);
+static K_THREAD_STACK_DEFINE(ecc_thread_stack, CONFIG_BT_HCI_ECC_STACK_SIZE);
 
 /* based on Core Specification 4.2 Vol 3. Part H 2.3.5.6.1 */
 static const u32_t debug_private_key[8] = {
@@ -84,7 +84,7 @@ static void send_cmd_status(u16_t opcode, u8_t status)
 
 	BT_DBG("opcode %x status %x", opcode, status);
 
-	buf = bt_buf_get_cmd_complete(K_FOREVER);
+	buf = bt_buf_get_evt(BT_HCI_EVT_CMD_STATUS, false, K_FOREVER);
 	bt_buf_set_type(buf, BT_BUF_EVT);
 
 	hdr = net_buf_add(buf, sizeof(*hdr));
@@ -217,7 +217,7 @@ static void ecc_thread(void *p1, void *p2, void *p3)
 			__ASSERT(0, "Unhandled ECC command");
 		}
 
-		STACK_ANALYZE("ecc stack", ecc_thread_stack);
+		log_stack_usage(&ecc_thread_data);
 	}
 }
 

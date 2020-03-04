@@ -6,83 +6,88 @@
 
 #include <zephyr.h>
 #include <device.h>
-#include <gpio.h>
-#include <misc/util.h>
-#include <misc/printk.h>
+#include <drivers/gpio.h>
+#include <sys/util.h>
+#include <sys/printk.h>
+#include <inttypes.h>
 
-/* change this to use another GPIO port */
-#ifndef SW0_GPIO_CONTROLLER
-#ifdef SW0_GPIO_NAME
-#define SW0_GPIO_CONTROLLER SW0_GPIO_NAME
-#else
-#error SW0_GPIO_NAME or SW0_GPIO_CONTROLLER needs to be set in board.h
-#endif
-#endif
-#define PORT	SW0_GPIO_CONTROLLER
+#define SLEEP_TIME_MS	1
 
-/* change this to use another GPIO pin */
-#ifdef SW0_GPIO_PIN
-#define PIN     SW0_GPIO_PIN
-#else
-#error SW0_GPIO_PIN needs to be set in board.h
+#ifndef DT_ALIAS_SW0_GPIOS_FLAGS
+#define DT_ALIAS_SW0_GPIOS_FLAGS 0
 #endif
 
-/* change to use another GPIO pin interrupt config */
-#ifdef SW0_GPIO_FLAGS
-#define EDGE    (SW0_GPIO_FLAGS | GPIO_INT_EDGE)
-#else
-/*
- * If SW0_GPIO_FLAGS not defined used default EDGE value.
- * Change this to use a different interrupt trigger
- */
-#define EDGE    (GPIO_INT_EDGE | GPIO_INT_ACTIVE_LOW)
+#ifndef DT_ALIAS_LED0_GPIOS_FLAGS
+#define DT_ALIAS_LED0_GPIOS_FLAGS 0
 #endif
 
-/* change this to enable pull-up/pull-down */
-#ifndef SW0_GPIO_FLAGS
-#ifdef SW0_GPIO_PIN_PUD
-#define SW0_GPIO_FLAGS SW0_GPIO_PIN_PUD
-#else
-#define SW0_GPIO_FLAGS 0
-#endif
-#endif
-#define PULL_UP SW0_GPIO_FLAGS
-
-/* Sleep time */
-#define SLEEP_TIME	500
-
-
-void button_pressed(struct device *gpiob, struct gpio_callback *cb,
+void button_pressed(struct device *dev, struct gpio_callback *cb,
 		    u32_t pins)
 {
-	printk("Button pressed at %d\n", k_cycle_get_32());
+	printk("Button pressed at %" PRIu32 "\n", k_cycle_get_32());
 }
 
-static struct gpio_callback gpio_cb;
+static struct gpio_callback button_cb_data;
 
 void main(void)
 {
-	struct device *gpiob;
+	struct device *dev_button;
+	int ret;
 
-	printk("Press the user defined button on the board\n");
-	gpiob = device_get_binding(PORT);
-	if (!gpiob) {
-		printk("error\n");
+	dev_button = device_get_binding(DT_ALIAS_SW0_GPIOS_CONTROLLER);
+	if (dev_button == NULL) {
+		printk("Error: didn't find %s device\n",
+			DT_ALIAS_SW0_GPIOS_CONTROLLER);
 		return;
 	}
 
-	gpio_pin_configure(gpiob, PIN,
-			   GPIO_DIR_IN | GPIO_INT |  PULL_UP | EDGE);
+	ret = gpio_pin_configure(dev_button, DT_ALIAS_SW0_GPIOS_PIN,
+				 DT_ALIAS_SW0_GPIOS_FLAGS | GPIO_INPUT);
+	if (ret != 0) {
+		printk("Error %d: failed to configure pin %d '%s'\n",
+			ret, DT_ALIAS_SW0_GPIOS_PIN, DT_ALIAS_SW0_LABEL);
+		return;
+	}
 
-	gpio_init_callback(&gpio_cb, button_pressed, BIT(PIN));
+	ret = gpio_pin_interrupt_configure(dev_button, DT_ALIAS_SW0_GPIOS_PIN,
+					   GPIO_INT_EDGE_TO_ACTIVE);
+	if (ret != 0) {
+		printk("Error %d: failed to configure interrupt on pin %d '%s'\n",
+			ret, DT_ALIAS_SW0_GPIOS_PIN, DT_ALIAS_SW0_LABEL);
+		return;
+	}
 
-	gpio_add_callback(gpiob, &gpio_cb);
-	gpio_pin_enable_callback(gpiob, PIN);
+	gpio_init_callback(&button_cb_data, button_pressed,
+			   BIT(DT_ALIAS_SW0_GPIOS_PIN));
+	gpio_add_callback(dev_button, &button_cb_data);
+
+#ifdef DT_ALIAS_LED0_GPIOS_CONTROLLER
+	struct device *dev_led;
+
+	dev_led = device_get_binding(DT_ALIAS_LED0_GPIOS_CONTROLLER);
+	if (dev_led == NULL) {
+		printk("Error: didn't find %s device\n",
+			DT_ALIAS_LED0_GPIOS_CONTROLLER);
+		return;
+	}
+
+	ret = gpio_pin_configure(dev_led, DT_ALIAS_LED0_GPIOS_PIN,
+				 DT_ALIAS_LED0_GPIOS_FLAGS | GPIO_OUTPUT);
+	if (ret != 0) {
+		printk("Error %d: failed to configure pin %d '%s'\n",
+			ret, DT_ALIAS_LED0_GPIOS_PIN, DT_ALIAS_LED0_LABEL);
+		return;
+	}
+#endif
+	printk("Press %s on the board\n", DT_ALIAS_SW0_LABEL);
 
 	while (1) {
-		u32_t val = 0U;
+#ifdef DT_ALIAS_LED0_GPIOS_CONTROLLER
+		bool val;
 
-		gpio_pin_read(gpiob, PIN, &val);
-		k_sleep(SLEEP_TIME);
+		val = gpio_pin_get(dev_button, DT_ALIAS_SW0_GPIOS_PIN);
+		gpio_pin_set(dev_led, DT_ALIAS_LED0_GPIOS_PIN, val);
+		k_sleep(SLEEP_TIME_MS);
+#endif
 	}
 }

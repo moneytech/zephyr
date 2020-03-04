@@ -10,6 +10,7 @@
 #include <kernel_structs.h>
 #include <kernel_arch_data.h>
 #include <kernel_arch_func.h>
+#include <arch/x86/msr.h>
 #include <kernel.h>
 
 /*
@@ -22,10 +23,6 @@
 /* Bits to check in CPUID extended features */
 #define CPUID_SPEC_CTRL_SSBD	BIT(31)
 #define CPUID_SPEC_CTRL_IBRS	BIT(26)
-
-/* Bits to set in IA32_SPEC_CTRL_MSR to enable */
-#define SPEC_CTRL_IBRS		BIT(0)
-#define SPEC_CTRL_SSBD		BIT(2)
 
 #if defined(CONFIG_DISABLE_SSBD) || defined(CONFIG_ENABLE_EXTENDED_IBRS)
 static u32_t cpuid_extended_features(void)
@@ -49,18 +46,18 @@ static int spec_ctrl_init(struct device *dev)
 
 #ifdef CONFIG_DISABLE_SSBD
 	if ((cpuid7 & CPUID_SPEC_CTRL_SSBD) != 0U) {
-		enable_bits |= SPEC_CTRL_SSBD;
+		enable_bits |= X86_SPEC_CTRL_MSR_SSBD;
 	}
 #endif
 #ifdef CONFIG_ENABLE_EXTENDED_IBRS
 	if ((cpuid7 & CPUID_SPEC_CTRL_IBRS) != 0U) {
-		enable_bits |= SPEC_CTRL_IBRS;
+		enable_bits |= X86_SPEC_CTRL_MSR_IBRS;
 	}
 #endif
 	if (enable_bits != 0U) {
-		u64_t cur = z_x86_msr_read(IA32_SPEC_CTRL_MSR);
+		u64_t cur = z_x86_msr_read(X86_SPEC_CTRL_MSR);
 
-		z_x86_msr_write(IA32_SPEC_CTRL_MSR,
+		z_x86_msr_write(X86_SPEC_CTRL_MSR,
 			       cur | enable_bits);
 	}
 

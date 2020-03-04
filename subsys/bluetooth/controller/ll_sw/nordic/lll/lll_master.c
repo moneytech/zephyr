@@ -8,7 +8,7 @@
 
 #include <toolchain.h>
 #include <zephyr/types.h>
-#include <misc/util.h>
+#include <sys/util.h>
 
 #include "hal/ccm.h"
 #include "hal/radio.h"
@@ -27,7 +27,8 @@
 #include "lll_internal.h"
 #include "lll_tim_internal.h"
 
-#define LOG_MODULE_NAME bt_ctlr_llsw_nordic_lll_master
+#define BT_DBG_ENABLED IS_ENABLED(CONFIG_BT_DEBUG_HCI_DRIVER)
+#define LOG_MODULE_NAME bt_ctlr_lll_master
 #include "common/log.h"
 #include <soc.h>
 #include "hal/debug.h"
@@ -80,8 +81,8 @@ static int init_reset(void)
 static int prepare_cb(struct lll_prepare_param *prepare_param)
 {
 	struct lll_conn *lll = prepare_param->param;
+	u32_t ticks_at_event, ticks_at_start;
 	struct pdu_data *pdu_data_tx;
-	u32_t ticks_at_event;
 	struct evt_hdr *evt;
 	u16_t event_counter;
 	u32_t remainder_us;
@@ -120,6 +121,7 @@ static int prepare_cb(struct lll_prepare_param *prepare_param)
 					       &lll->data_chan_map[0],
 					       lll->data_chan_count);
 #else /* !CONFIG_BT_CTLR_CHAN_SEL_2 */
+		data_chan_use = 0;
 		LL_ASSERT(0);
 #endif /* !CONFIG_BT_CTLR_CHAN_SEL_2 */
 	} else {
@@ -137,8 +139,12 @@ static int prepare_cb(struct lll_prepare_param *prepare_param)
 
 	/* Start setting up of Radio h/w */
 	radio_reset();
-	/* TODO: other Tx Power settings */
+#if defined(CONFIG_BT_CTLR_TX_PWR_DYNAMIC_CONTROL)
+	radio_tx_power_set(lll->tx_pwr_lvl);
+#else
 	radio_tx_power_set(RADIO_TXP_DEFAULT);
+#endif
+
 	radio_aa_set(lll->access_addr);
 	radio_crc_configure(((0x5bUL) | ((0x06UL) << 8) | ((0x00UL) << 16)),
 			    (((u32_t)lll->crc_init[2] << 16) |
@@ -151,7 +157,7 @@ static int prepare_cb(struct lll_prepare_param *prepare_param)
 
 	radio_isr_set(lll_conn_isr_tx, lll);
 
-	radio_tmr_tifs_set(TIFS_US);
+	radio_tmr_tifs_set(EVENT_IFS_US);
 
 #if defined(CONFIG_BT_CTLR_PHY)
 	radio_switch_complete_and_rx(lll->phy_rx);
@@ -162,10 +168,12 @@ static int prepare_cb(struct lll_prepare_param *prepare_param)
 	ticks_at_event = prepare_param->ticks_at_expire;
 	evt = HDR_LLL2EVT(lll);
 	ticks_at_event += lll_evt_offset_get(evt);
-	ticks_at_event += HAL_TICKER_US_TO_TICKS(EVENT_OVERHEAD_START_US);
+
+	ticks_at_start = ticks_at_event;
+	ticks_at_start += HAL_TICKER_US_TO_TICKS(EVENT_OVERHEAD_START_US);
 
 	remainder = prepare_param->remainder;
-	remainder_us = radio_tmr_start(1, ticks_at_event, remainder);
+	remainder_us = radio_tmr_start(1, ticks_at_start, remainder);
 
 	/* capture end of Tx-ed PDU, used to calculate HCTO. */
 	radio_tmr_end_capture();
@@ -190,7 +198,8 @@ static int prepare_cb(struct lll_prepare_param *prepare_param)
 #if defined(CONFIG_BT_CTLR_XTAL_ADVANCED) && \
 	(EVENT_OVERHEAD_PREEMPT_US <= EVENT_OVERHEAD_PREEMPT_MIN_US)
 	/* check if preempt to start has changed */
-	if (lll_preempt_calc(evt, TICKER_ID_CONN_BASE, ticks_at_event)) {
+	if (lll_preempt_calc(evt, (TICKER_ID_CONN_BASE + lll->handle),
+			     ticks_at_event)) {
 		radio_isr_set(lll_conn_isr_abort, lll);
 		radio_disable();
 	} else

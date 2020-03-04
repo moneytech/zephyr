@@ -15,7 +15,7 @@
 
 #include <zephyr/types.h>
 
-#include <misc/util.h>
+#include <sys/util.h>
 
 #include <net/net_core.h>
 #include <net/net_ip.h>
@@ -47,6 +47,9 @@ typedef enum net_verdict (*net_conn_cb_t)(struct net_conn *conn,
  *
  */
 struct net_conn {
+	/** Internal slist node */
+	sys_snode_t node;
+
 	/** Remote IP address */
 	struct sockaddr remote_addr;
 
@@ -67,18 +70,6 @@ struct net_conn {
 
 	/** Flags for the connection */
 	u8_t flags;
-
-	/** Rank of this connection. Higher rank means more specific
-	 * connection.
-	 * Value is constructed like this:
-	 *   bit 0  local port, bit set if specific value
-	 *   bit 1  remote port, bit set if specific value
-	 *   bit 2  local address, bit set if unspecified address
-	 *   bit 3  remote address, bit set if unspecified address
-	 *   bit 4  local address, bit set if specific address
-	 *   bit 5  remote address, bit set if specific address
-	 */
-	u8_t rank;
 };
 
 /**
@@ -97,6 +88,7 @@ struct net_conn {
  *
  * @return Return 0 if the registration succeed, <0 otherwise.
  */
+#if defined(CONFIG_NET_NATIVE)
 int net_conn_register(u16_t proto, u8_t family,
 		      const struct sockaddr *remote_addr,
 		      const struct sockaddr *local_addr,
@@ -105,6 +97,29 @@ int net_conn_register(u16_t proto, u8_t family,
 		      net_conn_cb_t cb,
 		      void *user_data,
 		      struct net_conn_handle **handle);
+#else
+static inline int net_conn_register(u16_t proto, u8_t family,
+				    const struct sockaddr *remote_addr,
+				    const struct sockaddr *local_addr,
+				    u16_t remote_port,
+				    u16_t local_port,
+				    net_conn_cb_t cb,
+				    void *user_data,
+				    struct net_conn_handle **handle)
+{
+	ARG_UNUSED(proto);
+	ARG_UNUSED(family);
+	ARG_UNUSED(remote_addr);
+	ARG_UNUSED(local_addr);
+	ARG_UNUSED(remote_port);
+	ARG_UNUSED(local_port);
+	ARG_UNUSED(cb);
+	ARG_UNUSED(user_data);
+	ARG_UNUSED(handle);
+
+	return -ENOTSUP;
+}
+#endif
 
 /**
  * @brief Unregister connection handler.
@@ -113,7 +128,16 @@ int net_conn_register(u16_t proto, u8_t family,
  *
  * @return Return 0 if the unregistration succeed, <0 otherwise.
  */
+#if defined(CONFIG_NET_NATIVE)
 int net_conn_unregister(struct net_conn_handle *handle);
+#else
+static inline int net_conn_unregister(struct net_conn_handle *handle)
+{
+	ARG_UNUSED(handle);
+
+	return -ENOTSUP;
+}
+#endif
 
 /**
  * @brief Change the callback and user_data for a registered connection
@@ -174,7 +198,11 @@ typedef void (*net_conn_foreach_cb_t)(struct net_conn *conn, void *user_data);
  */
 void net_conn_foreach(net_conn_foreach_cb_t cb, void *user_data);
 
+#if defined(CONFIG_NET_NATIVE)
 void net_conn_init(void);
+#else
+#define net_conn_init(...)
+#endif
 
 #ifdef __cplusplus
 }

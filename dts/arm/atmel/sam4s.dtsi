@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2017 Justin Watson
+ * Copyright (c) 2019 Gerson Fernando Budke
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -9,11 +10,15 @@
 #include <dt-bindings/gpio/gpio.h>
 
 / {
+	aliases {
+		watchdog0 = &wdog;
+	};
+
 	cpus {
 		#address-cells = <1>;
 		#size-cells = <0>;
 
-		cpu@0 {
+		cpu0: cpu@0 {
 			device_type = "cpu";
 			compatible = "arm,cortex-m4";
 			reg = <0>;
@@ -21,7 +26,6 @@
 	};
 
 	sram0: memory@20100000 {
-		device_type = "memory";
 		compatible = "mmio-sram";
 	};
 
@@ -31,6 +35,17 @@
 	};
 
 	soc {
+		/* Only used for HWINFO device ID */
+		flash-controller@400e0a00 {
+			compatible = "atmel,sam-flash-controller";
+			label = "FLASH_CTRL";
+			reg = <0x400e0a00 0x200>;
+			peripheral-id = <6>;
+
+			#address-cells = <1>;
+			#size-cells = <1>;
+		};
+
 		wdog: watchdog@400e1450 {
 			compatible = "atmel,sam-watchdog";
 			reg = <0x400e1450 0xc>;
@@ -47,6 +62,8 @@
 			peripheral-id = <19>;
 			label = "I2C_0";
 			status = "disabled";
+			#address-cells = <1>;
+			#size-cells = <0>;
 		};
 
 		i2c1: i2c@4001c000 {
@@ -56,6 +73,19 @@
 			interrupts = <20 0>;
 			peripheral-id = <20>;
 			label = "I2C_1";
+			status = "disabled";
+			#address-cells = <1>;
+			#size-cells = <0>;
+		};
+
+		spi0: spi@40008000 {
+			compatible = "atmel,sam-spi";
+			#address-cells = <1>;
+			#size-cells = <0>;
+			reg = <0x40008000 0x4000>;
+			interrupts = <21 0>;
+			peripheral-id = <21>;
+			label = "SPI_0";
 			status = "disabled";
 		};
 

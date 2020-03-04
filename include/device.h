@@ -1,4 +1,3 @@
-
 /*
  * Copyright (c) 2015 Intel Corporation.
  *
@@ -102,12 +101,12 @@ extern "C" {
 #ifndef CONFIG_DEVICE_POWER_MANAGEMENT
 #define DEVICE_AND_API_INIT(dev_name, drv_name, init_fn, data, cfg_info,  \
 			    level, prio, api)				  \
-	static struct device_config _CONCAT(__config_, dev_name) __used	  \
+	static const struct device_config _CONCAT(__config_, dev_name) __used \
 	__attribute__((__section__(".devconfig.init"))) = {		  \
 		.name = drv_name, .init = (init_fn),			  \
 		.config_info = (cfg_info)				  \
 	};								  \
-	static struct device _CONCAT(__device_, dev_name) __used	  \
+	static Z_DECL_ALIGN(struct device) _CONCAT(__device_, dev_name) __used \
 	__attribute__((__section__(".init_" #level STRINGIFY(prio)))) = { \
 		.config = &_CONCAT(__config_, dev_name),		  \
 		.driver_api = api,					  \
@@ -164,7 +163,7 @@ extern "C" {
 		.pm  = &_CONCAT(__pm_, dev_name),                         \
 		.config_info = (cfg_info)				  \
 	};								  \
-	static struct device _CONCAT(__device_, dev_name) __used	  \
+	static Z_DECL_ALIGN(struct device) _CONCAT(__device_, dev_name) __used \
 	__attribute__((__section__(".init_" #level STRINGIFY(prio)))) = { \
 		.config = &_CONCAT(__config_, dev_name),		  \
 		.driver_api = api,					  \
@@ -273,17 +272,9 @@ struct device_config {
  * @param driver_data driver instance data. For driver use only
  */
 struct device {
-	struct device_config *config;
+	const struct device_config *config;
 	const void *driver_api;
 	void *driver_data;
-#if defined(__x86_64) && __SIZEOF_POINTER__ == 4
-	/* The x32 ABI hits an edge case.  This is a 12 byte struct,
-	 * but the x86_64 linker will pack them only in units of 8
-	 * bytes, leading to alignment problems when iterating over
-	 * the link-time array.
-	 */
-	void *padding;
-#endif
 };
 
 void z_sys_device_do_config_level(s32_t level);
@@ -369,6 +360,13 @@ __syscall struct device *device_get_binding(const char *name);
 #define DEVICE_PM_GET_POWER_STATE       2
 
 #endif /* CONFIG_DEVICE_POWER_MANAGEMENT */
+
+/**
+ * @brief Get name of device PM state
+ *
+ * @param state State id which name should be returned
+ */
+const char *device_pm_state_str(u32_t state);
 
 /**
  * @brief Indicate that the device is in the middle of a transaction
@@ -604,9 +602,10 @@ static inline int device_pm_put_sync(struct device *dev) { return -ENOTSUP; }
  * @}
  */
 
-#include <syscalls/device.h>
-
 #ifdef __cplusplus
 }
 #endif
+
+#include <syscalls/device.h>
+
 #endif /* ZEPHYR_INCLUDE_DEVICE_H_ */

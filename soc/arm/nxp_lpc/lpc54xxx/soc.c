@@ -16,14 +16,15 @@
 #include <device.h>
 #include <init.h>
 #include <soc.h>
-#include <uart.h>
+#include <drivers/uart.h>
 #include <linker/sections.h>
 #include <arch/cpu.h>
-#include <cortex_m/exc.h>
+#include <aarch32/cortex_m/exc.h>
 #include <fsl_power.h>
 #include <fsl_clock.h>
 #include <fsl_common.h>
 #include <fsl_device_registers.h>
+#include <fsl_pint.h>
 
 /**
  *
@@ -33,7 +34,7 @@
  *
  */
 
-static ALWAYS_INLINE void clkInit(void)
+static ALWAYS_INLINE void clock_init(void)
 {
 
 #ifdef CONFIG_SOC_LPC54114_M4
@@ -49,10 +50,10 @@ static ALWAYS_INLINE void clkInit(void)
 	CLOCK_AttachClk(kFRO12M_to_MAIN_CLK);
 
 	/* Set FLASH wait states for core */
-	CLOCK_SetFLASHAccessCyclesForFreq(CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC);
+	CLOCK_SetFLASHAccessCyclesForFreq(DT_ARM_CORTEX_M4F_0_CLOCK_FREQUENCY);
 
 	/* Set up high frequency FRO output to selected frequency */
-	CLOCK_SetupFROClocking(CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC);
+	CLOCK_SetupFROClocking(DT_ARM_CORTEX_M4F_0_CLOCK_FREQUENCY);
 
 	/* Set up dividers */
 	/* Set AHBCLKDIV divider to value 1 */
@@ -64,6 +65,15 @@ static ALWAYS_INLINE void clkInit(void)
 
 	/* Attach 12 MHz clock to FLEXCOMM0 */
 	CLOCK_AttachClk(kFRO12M_to_FLEXCOMM0);
+
+#ifdef CONFIG_SPI_5
+	/* Attach 12 MHz clock to FLEXCOMM5 */
+	CLOCK_AttachClk(kFRO12M_to_FLEXCOMM5);
+
+	/* reset FLEXCOMM for SPI */
+	RESET_PeripheralReset(kFC5_RST_SHIFT_RSTn);
+#endif /* CONFIG_SPI_5 */
+
 #endif /* CONFIG_SOC_LPC54114_M4 */
 }
 
@@ -87,10 +97,13 @@ static int nxp_lpc54114_init(struct device *arg)
 	/* disable interrupts */
 	oldLevel = irq_lock();
 
-	z_clearfaults();
-
 	/* Initialize FRO/system clock to 48 MHz */
-	clkInit();
+	clock_init();
+
+#ifdef CONFIG_GPIO_MCUX_LPC
+	/* Turn on PINT device*/
+	PINT_Init(PINT);
+#endif
 
 	/*
 	 * install default handler that simply resets the CPU if configured in

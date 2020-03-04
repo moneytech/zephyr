@@ -45,8 +45,7 @@ static void disconnect_event_notify(struct mqtt_client *client, int result)
 	struct mqtt_evt evt;
 
 	/* Determine appropriate event to generate. */
-	if (MQTT_HAS_STATE(client, MQTT_STATE_CONNECTED) ||
-	    MQTT_HAS_STATE(client, MQTT_STATE_DISCONNECTING)) {
+	if (MQTT_HAS_STATE(client, MQTT_STATE_CONNECTED)) {
 		evt.type = MQTT_EVT_DISCONNECT;
 		evt.result = result;
 	} else {
@@ -111,6 +110,9 @@ static int client_connect(struct mqtt_client *client)
 
 	client->internal.last_activity = mqtt_sys_tick_in_ms_get();
 
+	/* Reset the unanswered ping count for a new connection */
+	client->unacked_ping = 0;
+
 	MQTT_TRC("Connect completed");
 
 	return 0;
@@ -168,7 +170,28 @@ void mqtt_client_init(struct mqtt_client *client)
 
 	client->protocol_version = MQTT_VERSION_3_1_1;
 	client->clean_session = 1U;
+	client->keepalive = MQTT_KEEPALIVE;
 }
+
+#if defined(CONFIG_SOCKS)
+int mqtt_client_set_proxy(struct mqtt_client *client,
+			  struct sockaddr *proxy_addr,
+			  socklen_t addrlen)
+{
+	if (IS_ENABLED(CONFIG_SOCKS)) {
+		if (!client || !proxy_addr) {
+			return -EINVAL;
+		}
+
+		client->transport.proxy.addrlen = addrlen;
+		memcpy(&client->transport.proxy.addr, proxy_addr, addrlen);
+
+		return 0;
+	}
+
+	return -ENOTSUP;
+}
+#endif
 
 int mqtt_connect(struct mqtt_client *client)
 {
@@ -427,7 +450,7 @@ int mqtt_disconnect(struct mqtt_client *client)
 		goto error;
 	}
 
-	MQTT_SET_STATE_EXCLUSIVE(client, MQTT_STATE_DISCONNECTING);
+	client_disconnect(client, 0);
 
 error:
 	mqtt_mutex_unlock(client);
@@ -527,6 +550,12 @@ int mqtt_ping(struct mqtt_client *client)
 
 	err_code = client_write(client, packet.cur, packet.end - packet.cur);
 
+	if (client->unacked_ping >= INT8_MAX) {
+		MQTT_TRC("PING count overflow!");
+	} else {
+		client->unacked_ping++;
+	}
+
 error:
 	mqtt_mutex_unlock(client);
 
@@ -550,27 +579,47 @@ int mqtt_abort(struct mqtt_client *client)
 
 int mqtt_live(struct mqtt_client *client)
 {
+	int err_code = 0;
 	u32_t elapsed_time;
+	bool ping_sent = false;
 
 	NULL_PARAM_CHECK(client);
 
 	mqtt_mutex_lock(client);
 
-	if (MQTT_HAS_STATE(client, MQTT_STATE_DISCONNECTING)) {
-		client_disconnect(client, 0);
-	} else {
-		elapsed_time = mqtt_elapsed_time_in_ms_get(
-					client->internal.last_activity);
-
-		if ((MQTT_KEEPALIVE > 0) &&
-		    (elapsed_time >= (MQTT_KEEPALIVE * 1000))) {
-			(void)mqtt_ping(client);
-		}
+	elapsed_time = mqtt_elapsed_time_in_ms_get(
+				client->internal.last_activity);
+	if ((client->keepalive > 0) &&
+	    (elapsed_time >= (client->keepalive * 1000))) {
+		err_code = mqtt_ping(client);
+		ping_sent = true;
 	}
 
 	mqtt_mutex_unlock(client);
 
-	return 0;
+	if (ping_sent) {
+		return err_code;
+	} else {
+		return -EAGAIN;
+	}
+}
+
+u32_t mqtt_keepalive_time_left(const struct mqtt_client *client)
+{
+	u32_t elapsed_time = mqtt_elapsed_time_in_ms_get(
+					client->internal.last_activity);
+	u32_t keepalive_ms = 1000U * client->keepalive;
+
+	if (client->keepalive == 0) {
+		/* Keep alive not enabled. */
+		return UINT32_MAX;
+	}
+
+	if (keepalive_ms <= elapsed_time) {
+		return 0;
+	}
+
+	return keepalive_ms - elapsed_time;
 }
 
 int mqtt_input(struct mqtt_client *client)
@@ -583,9 +632,7 @@ int mqtt_input(struct mqtt_client *client)
 
 	MQTT_TRC("state:0x%08x", client->internal.state);
 
-	if (MQTT_HAS_STATE(client, MQTT_STATE_DISCONNECTING)) {
-		client_disconnect(client, 0);
-	} else if (MQTT_HAS_STATE(client, MQTT_STATE_TCP_CONNECTED)) {
+	if (MQTT_HAS_STATE(client, MQTT_STATE_TCP_CONNECTED)) {
 		err_code = client_read(client);
 	} else {
 		err_code = -EACCES;
@@ -596,8 +643,8 @@ int mqtt_input(struct mqtt_client *client)
 	return err_code;
 }
 
-int mqtt_read_publish_payload(struct mqtt_client *client, void *buffer,
-			      size_t length)
+static int read_publish_payload(struct mqtt_client *client, void *buffer,
+				size_t length, bool shall_block)
 {
 	int ret;
 
@@ -614,8 +661,8 @@ int mqtt_read_publish_payload(struct mqtt_client *client, void *buffer,
 		length = client->internal.remaining_payload;
 	}
 
-	ret = mqtt_transport_read(client, buffer, length);
-	if (ret == -EAGAIN) {
+	ret = mqtt_transport_read(client, buffer, length, shall_block);
+	if (!shall_block && ret == -EAGAIN) {
 		goto exit;
 	}
 
@@ -634,4 +681,37 @@ exit:
 	mqtt_mutex_unlock(client);
 
 	return ret;
+}
+
+int mqtt_read_publish_payload(struct mqtt_client *client, void *buffer,
+			      size_t length)
+{
+	return read_publish_payload(client, buffer, length, false);
+}
+
+int mqtt_read_publish_payload_blocking(struct mqtt_client *client, void *buffer,
+				       size_t length)
+{
+	return read_publish_payload(client, buffer, length, true);
+}
+
+int mqtt_readall_publish_payload(struct mqtt_client *client, u8_t *buffer,
+				 size_t length)
+{
+	u8_t *end = buffer + length;
+
+	while (buffer < end) {
+		int ret = mqtt_read_publish_payload_blocking(client, buffer,
+							     end - buffer);
+
+		if (ret < 0) {
+			return ret;
+		} else if (ret == 0) {
+			return -EIO;
+		}
+
+		buffer += ret;
+	}
+
+	return 0;
 }

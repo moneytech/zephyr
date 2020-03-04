@@ -129,7 +129,7 @@ void test_thread_without_kobject_permission(void *p1, void *p2, void *p3)
 void kobject_user_test4(void *p1, void *p2, void *p3)
 {
 	/* should cause a fault */
-	if ((u32_t)p1 == 1U) {
+	if ((uintptr_t)p1 == 1U) {
 		valid_fault = false;
 	} else {
 		valid_fault = true;
@@ -377,7 +377,7 @@ void kobject_user_2_test9(void *p1, void *p2, void *p3)
 	USERSPACE_BARRIER;
 
 	k_sem_take(&kobject_sem, K_FOREVER);
-	zassert_unreachable("Failed to clear premission on a deleted thread");
+	zassert_unreachable("Failed to clear permission on a deleted thread");
 }
 
 /**

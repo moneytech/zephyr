@@ -24,7 +24,7 @@
 
 #include <stdint.h>
 #include <errno.h>
-#include <base64.h>
+#include <sys/base64.h>
 
 static const u8_t base64_enc_map[64] = {
 	'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J',
@@ -214,4 +214,3 @@ int base64_decode(u8_t *dst, size_t dlen, size_t *olen, const u8_t *src,
 
 	return 0;
 }
-

@@ -1,146 +1,384 @@
 /*
  * Copyright (c) 2017 Google LLC.
+ * Copyright (c) 2019 Nordic Semiconductor ASA
  *
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <errno.h>
 #include <device.h>
-#include <gpio.h>
+#include <drivers/gpio.h>
 #include <soc.h>
+#include <drivers/interrupt_controller/sam0_eic.h>
+
+#include "gpio_utils.h"
+
+#ifndef PORT_PMUX_PMUXE_A_Val
+#define PORT_PMUX_PMUXE_A_Val (0)
+#endif
 
 struct gpio_sam0_config {
+	/* gpio_driver_config needs to be first */
+	struct gpio_driver_config common;
 	PortGroup *regs;
+#ifdef CONFIG_SAM0_EIC
+	u8_t id;
+#endif
+};
+
+struct gpio_sam0_data {
+	/* gpio_driver_data needs to be first */
+	struct gpio_driver_data common;
+	gpio_port_pins_t debounce;
+#ifdef CONFIG_SAM0_EIC
+	sys_slist_t callbacks;
+#endif
 };
 
 #define DEV_CFG(dev) \
 	((const struct gpio_sam0_config *const)(dev)->config->config_info)
+#define DEV_DATA(dev) \
+	((struct gpio_sam0_data *const)(dev)->driver_data)
 
-static int gpio_sam0_config(struct device *dev, int access_op, u32_t pin,
-			    int flags)
+#ifdef CONFIG_SAM0_EIC
+static void gpio_sam0_isr(u32_t pins, void *arg)
+{
+	struct device *const dev = (struct device *) arg;
+	struct gpio_sam0_data *const data = DEV_DATA(dev);
+
+	gpio_fire_callbacks(&data->callbacks, dev, pins);
+}
+#endif
+
+static int gpio_sam0_config(struct device *dev, gpio_pin_t pin,
+			    gpio_flags_t flags)
 {
 	const struct gpio_sam0_config *config = DEV_CFG(dev);
 	PortGroup *regs = config->regs;
-	u32_t mask = 1 << pin;
-	bool is_out = (flags & GPIO_DIR_MASK) == GPIO_DIR_OUT;
-	int pud = flags & GPIO_PUD_MASK;
-	PORT_PINCFG_Type pincfg;
+	PORT_PINCFG_Type pincfg = {
+		.reg = 0,
+	};
 
-	if (access_op != GPIO_ACCESS_BY_PIN) {
+	if ((flags & GPIO_SINGLE_ENDED) != 0) {
 		return -ENOTSUP;
 	}
 
-	/* Builds the configuration and writes it in one go */
-	pincfg.reg = 0;
-	pincfg.bit.INEN = 1;
-
-	/* Direction */
-	if (is_out) {
-		regs->DIRSET.bit.DIRSET = mask;
+	/* Supports disconnected, input, output, or bidirectional */
+	if ((flags & GPIO_INPUT) != 0) {
+		pincfg.bit.INEN = 1;
+	}
+	if ((flags & GPIO_OUTPUT) != 0) {
+		/* Output is incompatible with pull */
+		if ((flags & (GPIO_PULL_UP | GPIO_PULL_DOWN)) != 0) {
+			return -ENOTSUP;
+		}
+		/* Bidirectional is supported */
+		if ((flags & GPIO_OUTPUT_INIT_LOW) != 0) {
+			regs->OUTCLR.reg = BIT(pin);
+		} else if ((flags & GPIO_OUTPUT_INIT_HIGH) != 0) {
+			regs->OUTSET.reg = BIT(pin);
+		}
+		regs->DIRSET.reg = BIT(pin);
 	} else {
-		regs->DIRCLR.bit.DIRCLR = mask;
+		/* Not output, may be input */
+		regs->DIRCLR.reg = BIT(pin);
+
+		/* Pull configuration is supported if not output */
+		if ((flags & (GPIO_PULL_UP | GPIO_PULL_DOWN)) != 0) {
+			pincfg.bit.PULLEN = 1;
+			if ((flags & GPIO_PULL_UP) != 0) {
+				regs->OUTSET.reg = BIT(pin);
+			} else {
+				regs->OUTCLR.reg = BIT(pin);
+			}
+		}
 	}
 
-	/* Pull up / pull down */
-	if (is_out && pud != GPIO_PUD_NORMAL) {
-		return -ENOTSUP;
-	}
-
-	switch (pud) {
-	case GPIO_PUD_NORMAL:
-		break;
-	case GPIO_PUD_PULL_UP:
-		pincfg.bit.PULLEN = 1;
-		regs->OUTSET.reg = mask;
-		break;
-	case GPIO_PUD_PULL_DOWN:
-		pincfg.bit.PULLEN = 1;
-		regs->OUTCLR.reg = mask;
-		break;
-	default:
-		return -ENOTSUP;
-	}
+	/* Preserve debounce flag for interrupt configuration. */
+	WRITE_BIT(DEV_DATA(dev)->debounce, pin,
+		  ((flags & GPIO_INT_DEBOUNCE) != 0)
+		  && (pincfg.bit.INEN != 0));
 
 	/* Write the now-built pin configuration */
 	regs->PINCFG[pin] = pincfg;
 
-	if ((flags & GPIO_INT) != 0) {
-		/* TODO(mlhx): implement. */
-		return -ENOTSUP;
-	}
-
-	if ((flags & GPIO_POL_MASK) != GPIO_POL_NORMAL) {
-		return -ENOTSUP;
-	}
-
 	return 0;
 }
 
-static int gpio_sam0_write(struct device *dev, int access_op, u32_t pin,
-			   u32_t value)
+static int gpio_sam0_port_get_raw(struct device *dev,
+				  gpio_port_value_t *value)
 {
 	const struct gpio_sam0_config *config = DEV_CFG(dev);
-	u32_t mask = 1 << pin;
 
-	if (access_op != GPIO_ACCESS_BY_PIN) {
-		/* TODO(mlhx): support GPIO_ACCESS_BY_PORT */
-		return -ENOTSUP;
-	}
-
-	if (value != 0U) {
-		config->regs->OUTSET.bit.OUTSET = mask;
-	} else {
-		config->regs->OUTCLR.bit.OUTCLR = mask;
-	}
+	*value = config->regs->IN.reg;
 
 	return 0;
 }
 
-static int gpio_sam0_read(struct device *dev, int access_op, u32_t pin,
-			  u32_t *value)
+static int gpio_sam0_port_set_masked_raw(struct device *dev,
+					 gpio_port_pins_t mask,
+					 gpio_port_value_t value)
 {
 	const struct gpio_sam0_config *config = DEV_CFG(dev);
-	u32_t bits;
+	u32_t out = config->regs->OUT.reg;
 
-	if (access_op != GPIO_ACCESS_BY_PIN) {
-		/* TODO(mlhx): support GPIO_ACCESS_BY_PORT */
-		return -ENOTSUP;
-	}
-
-	bits = config->regs->IN.bit.IN;
-	*value = (bits >> pin) & 1;
+	config->regs->OUT.reg = (out & ~mask) | (value & mask);
 
 	return 0;
 }
+
+static int gpio_sam0_port_set_bits_raw(struct device *dev,
+				       gpio_port_pins_t pins)
+{
+	const struct gpio_sam0_config *config = DEV_CFG(dev);
+
+	config->regs->OUTSET.reg = pins;
+
+	return 0;
+}
+
+static int gpio_sam0_port_clear_bits_raw(struct device *dev,
+					 gpio_port_pins_t pins)
+{
+	const struct gpio_sam0_config *config = DEV_CFG(dev);
+
+	config->regs->OUTCLR.reg = pins;
+
+	return 0;
+}
+
+static int gpio_sam0_port_toggle_bits(struct device *dev,
+				      gpio_port_pins_t pins)
+{
+	const struct gpio_sam0_config *config = DEV_CFG(dev);
+
+	config->regs->OUTTGL.reg = pins;
+
+	return 0;
+}
+
+#ifdef CONFIG_SAM0_EIC
+
+static int gpio_sam0_pin_interrupt_configure(struct device *dev,
+					     gpio_pin_t pin,
+					     enum gpio_int_mode mode,
+					     enum gpio_int_trig trig)
+{
+	const struct gpio_sam0_config *config = DEV_CFG(dev);
+	PortGroup *regs = config->regs;
+	PORT_PINCFG_Type pincfg = {
+		.reg = regs->PINCFG[pin].reg,
+	};
+	enum sam0_eic_trigger trigger;
+	int rc = 0;
+
+	switch (mode) {
+	case GPIO_INT_MODE_DISABLED:
+		pincfg.bit.PMUXEN = 0;
+		rc = sam0_eic_disable_interrupt(config->id, pin);
+		if (rc == -EBUSY) {
+			/* Ignore diagnostic disabling disabled */
+			rc = 0;
+		}
+		if (rc == 0) {
+			rc = sam0_eic_release(config->id, pin);
+		}
+		break;
+	case GPIO_INT_MODE_LEVEL:
+	case GPIO_INT_MODE_EDGE:
+		/* Enabling interrupts on a pin requires disconnecting
+		 * the pin from the I/O pin controller (PORT) module
+		 * and connecting it to the External Interrupt
+		 * Controller (EIC).  This would prevent using the pin
+		 * as an output, so interrupts are only supported if
+		 * the pin is configured as input-only.
+		 */
+		if ((pincfg.bit.INEN == 0)
+		    || ((regs->DIR.reg & BIT(pin)) != 0)) {
+			rc = -ENOTSUP;
+			break;
+		}
+
+		/* Transfer control to EIC */
+		pincfg.bit.PMUXEN = 1;
+		if ((pin & 1U) != 0) {
+			regs->PMUX[pin / 2U].bit.PMUXO = PORT_PMUX_PMUXE_A_Val;
+		} else {
+			regs->PMUX[pin / 2U].bit.PMUXE = PORT_PMUX_PMUXE_A_Val;
+		}
+
+		switch (trig) {
+		case GPIO_INT_TRIG_LOW:
+			trigger = (mode == GPIO_INT_MODE_LEVEL)
+				? SAM0_EIC_LOW
+				: SAM0_EIC_FALLING;
+			break;
+		case GPIO_INT_TRIG_HIGH:
+			trigger = (mode == GPIO_INT_MODE_LEVEL)
+				? SAM0_EIC_HIGH
+				: SAM0_EIC_RISING;
+			break;
+		case GPIO_INT_TRIG_BOTH:
+			trigger = SAM0_EIC_BOTH;
+			break;
+		default:
+			rc = -EINVAL;
+			break;
+		}
+
+		if (rc == 0) {
+			rc = sam0_eic_acquire(config->id, pin, trigger,
+					      (DEV_DATA(dev)->debounce & BIT(pin)) != 0,
+					      gpio_sam0_isr, dev);
+		}
+		if (rc == 0) {
+			rc = sam0_eic_enable_interrupt(config->id, pin);
+		}
+
+		break;
+	default:
+		rc = -EINVAL;
+		break;
+	}
+
+	if (rc == 0) {
+		/* Update the pin configuration */
+		regs->PINCFG[pin] = pincfg;
+	}
+
+	return rc;
+}
+
+
+static int gpio_sam0_manage_callback(struct device *dev,
+			      struct gpio_callback *callback, bool set)
+{
+	struct gpio_sam0_data *const data = DEV_DATA(dev);
+
+	return gpio_manage_callback(&data->callbacks, callback, set);
+}
+
+int gpio_sam0_enable_callback(struct device *dev, gpio_pin_t pin)
+{
+	const struct gpio_sam0_config *config = DEV_CFG(dev);
+
+	return sam0_eic_enable_interrupt(config->id, pin);
+}
+
+int gpio_sam0_disable_callback(struct device *dev, gpio_pin_t pin)
+{
+	const struct gpio_sam0_config *config = DEV_CFG(dev);
+
+	return sam0_eic_disable_interrupt(config->id, pin);
+}
+
+static u32_t gpio_sam0_get_pending_int(struct device *dev)
+{
+	const struct gpio_sam0_config *config = DEV_CFG(dev);
+
+	return sam0_eic_interrupt_pending(config->id);
+}
+
+#endif
 
 static const struct gpio_driver_api gpio_sam0_api = {
-	.config = gpio_sam0_config,
-	.write = gpio_sam0_write,
-	.read = gpio_sam0_read,
+	.pin_configure = gpio_sam0_config,
+	.port_get_raw = gpio_sam0_port_get_raw,
+	.port_set_masked_raw = gpio_sam0_port_set_masked_raw,
+	.port_set_bits_raw = gpio_sam0_port_set_bits_raw,
+	.port_clear_bits_raw = gpio_sam0_port_clear_bits_raw,
+	.port_toggle_bits = gpio_sam0_port_toggle_bits,
+#ifdef CONFIG_SAM0_EIC
+	.pin_interrupt_configure = gpio_sam0_pin_interrupt_configure,
+	.manage_callback = gpio_sam0_manage_callback,
+	.enable_callback = gpio_sam0_enable_callback,
+	.disable_callback = gpio_sam0_disable_callback,
+	.get_pending_int = gpio_sam0_get_pending_int,
+#endif
 };
 
 static int gpio_sam0_init(struct device *dev) { return 0; }
 
 /* Port A */
-#ifdef DT_GPIO_SAM0_PORTA_BASE_ADDRESS
+#if DT_ATMEL_SAM0_GPIO_PORT_A_BASE_ADDRESS
 
 static const struct gpio_sam0_config gpio_sam0_config_0 = {
-	.regs = (PortGroup *)DT_GPIO_SAM0_PORTA_BASE_ADDRESS,
+	.common = {
+		.port_pin_mask = GPIO_PORT_PIN_MASK_FROM_NGPIOS(DT_INST_0_ATMEL_SAM0_GPIO_NGPIOS),
+	},
+	.regs = (PortGroup *)DT_ATMEL_SAM0_GPIO_PORT_A_BASE_ADDRESS,
+#ifdef CONFIG_SAM0_EIC
+	.id = 0,
+#endif
 };
 
-DEVICE_AND_API_INIT(gpio_sam0_0, DT_GPIO_SAM0_PORTA_LABEL, gpio_sam0_init,
-		    NULL, &gpio_sam0_config_0, POST_KERNEL,
-		    CONFIG_KERNEL_INIT_PRIORITY_DEVICE, &gpio_sam0_api);
+static struct gpio_sam0_data gpio_sam0_data_0;
+
+DEVICE_AND_API_INIT(gpio_sam0_0, DT_ATMEL_SAM0_GPIO_PORT_A_LABEL,
+		    gpio_sam0_init, &gpio_sam0_data_0, &gpio_sam0_config_0,
+		    POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEVICE,
+		    &gpio_sam0_api);
 #endif
 
 /* Port B */
-#ifdef DT_GPIO_SAM0_PORTB_BASE_ADDRESS
+#if DT_ATMEL_SAM0_GPIO_PORT_B_BASE_ADDRESS
 
 static const struct gpio_sam0_config gpio_sam0_config_1 = {
-	.regs = (PortGroup *)DT_GPIO_SAM0_PORTB_BASE_ADDRESS,
+	.common = {
+		.port_pin_mask = GPIO_PORT_PIN_MASK_FROM_NGPIOS(DT_INST_1_ATMEL_SAM0_GPIO_NGPIOS),
+	},
+	.regs = (PortGroup *)DT_ATMEL_SAM0_GPIO_PORT_B_BASE_ADDRESS,
+#ifdef CONFIG_SAM0_EIC
+	.id = 1,
+#endif
 };
 
-DEVICE_AND_API_INIT(gpio_sam0_1, DT_GPIO_SAM0_PORTB_LABEL, gpio_sam0_init,
-		    NULL, &gpio_sam0_config_1, POST_KERNEL,
-		    CONFIG_KERNEL_INIT_PRIORITY_DEVICE, &gpio_sam0_api);
+static struct gpio_sam0_data gpio_sam0_data_1;
+
+DEVICE_AND_API_INIT(gpio_sam0_1, DT_ATMEL_SAM0_GPIO_PORT_B_LABEL,
+		    gpio_sam0_init, &gpio_sam0_data_1, &gpio_sam0_config_1,
+		    POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEVICE,
+		    &gpio_sam0_api);
+#endif
+
+/* Port C */
+#if DT_ATMEL_SAM0_GPIO_PORT_C_BASE_ADDRESS
+
+static const struct gpio_sam0_config gpio_sam0_config_2 = {
+	.common = {
+		.port_pin_mask = GPIO_PORT_PIN_MASK_FROM_NGPIOS(DT_INST_2_ATMEL_SAM0_GPIO_NGPIOS),
+	},
+	.regs = (PortGroup *)DT_ATMEL_SAM0_GPIO_PORT_C_BASE_ADDRESS,
+#ifdef CONFIG_SAM0_EIC
+	.id = 2,
+#endif
+};
+
+static struct gpio_sam0_data gpio_sam0_data_2;
+
+DEVICE_AND_API_INIT(gpio_sam0_2, DT_ATMEL_SAM0_GPIO_PORT_C_LABEL,
+		    gpio_sam0_init, &gpio_sam0_data_2, &gpio_sam0_config_2,
+		    POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEVICE,
+		    &gpio_sam0_api);
+#endif
+
+/* Port D */
+#if DT_ATMEL_SAM0_GPIO_PORT_D_BASE_ADDRESS
+
+static const struct gpio_sam0_config gpio_sam0_config_3 = {
+	.common = {
+		.port_pin_mask = GPIO_PORT_PIN_MASK_FROM_NGPIOS(DT_INST_3_ATMEL_SAM0_GPIO_NGPIOS),
+	},
+	.regs = (PortGroup *)DT_ATMEL_SAM0_GPIO_PORT_D_BASE_ADDRESS,
+#ifdef CONFIG_SAM0_EIC
+	.id = 3,
+#endif
+};
+
+static struct gpio_sam0_data gpio_sam0_data_3;
+
+DEVICE_AND_API_INIT(gpio_sam0_3, DT_ATMEL_SAM0_GPIO_PORT_D_LABEL,
+		    gpio_sam0_init, &gpio_sam0_data_3, &gpio_sam0_config_3,
+		    POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEVICE,
+		    &gpio_sam0_api);
 #endif

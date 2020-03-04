@@ -18,7 +18,7 @@
 #include <init.h>
 #include <soc.h>
 #include <arch/cpu.h>
-#include <cortex_m/exc.h>
+#include <arch/arm/aarch32/cortex_m/cmsis.h>
 
 /*
  * PLL clock = Main * (MULA + 1) / DIVA
@@ -208,8 +208,6 @@ static int atmel_sam3x_init(struct device *arg)
 	ARG_UNUSED(arg);
 
 	key = irq_lock();
-
-	z_clearfaults();
 
 	/*
 	 * Set FWS (Flash Wait State) value before increasing Master Clock

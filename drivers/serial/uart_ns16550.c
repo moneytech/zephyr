@@ -2,6 +2,7 @@
 
 /*
  * Copyright (c) 2010, 2012-2015 Wind River Systems, Inc.
+ * Copyright (c) 2020 Intel Corp.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -20,7 +21,6 @@
  *  UART_REG_ADDR_INTERVAL
  */
 
-
 #include <errno.h>
 #include <kernel.h>
 #include <arch/cpu.h>
@@ -30,15 +30,38 @@
 #include <init.h>
 #include <toolchain.h>
 #include <linker/sections.h>
-#include <uart.h>
-#include <sys_io.h>
+#include <drivers/uart.h>
+#include <sys/sys_io.h>
 
-#ifdef CONFIG_PCI
-#include <pci/pci.h>
-#include <pci/pci_mgr.h>
-#endif /* CONFIG_PCI */
+#include "uart_ns16550.h"
 
-#include <drivers/serial/uart_ns16550.h>
+/*
+ * If PCP is set for any of the ports, enable support.
+ * Ditto for DLF and PCI(e).
+ */
+
+#if defined(DT_UART_NS16550_PORT_0_PCP) || \
+	defined(DT_UART_NS16550_PORT_1_PCP) || \
+	defined(DT_UART_NS16550_PORT_2_PCP) || \
+	defined(DT_UART_NS16550_PORT_3_PCP)
+#define UART_NS16550_PCP_ENABLED
+#endif
+
+#if defined(DT_UART_NS16550_PORT_0_DLF) || \
+	defined(DT_UART_NS16550_PORT_1_DLF) || \
+	defined(DT_UART_NS16550_PORT_2_DLF) || \
+	defined(DT_UART_NS16550_PORT_3_DLF)
+#define UART_NS16550_DLF_ENABLED
+#endif
+
+#if DT_UART_NS16550_PORT_0_PCIE || \
+	DT_UART_NS16550_PORT_1_PCIE || \
+	DT_UART_NS16550_PORT_2_PCIE || \
+	DT_UART_NS16550_PORT_3_PCIE
+BUILD_ASSERT_MSG(IS_ENABLED(CONFIG_PCIE), "NS16550(s) in DT need CONFIG_PCIE");
+#define UART_NS16550_PCIE_ENABLED
+#include <drivers/pcie/pcie.h>
+#endif
 
 /* register definitions */
 
@@ -176,24 +199,26 @@
 /* convenience defines */
 
 #define DEV_CFG(dev) \
-	((const struct uart_ns16550_device_config * const) \
+	((struct uart_ns16550_device_config * const) \
 	 (dev)->config->config_info)
 #define DEV_DATA(dev) \
 	((struct uart_ns16550_dev_data_t *)(dev)->driver_data)
 
-#define THR(dev) (DEV_DATA(dev)->port + REG_THR * UART_REG_ADDR_INTERVAL)
-#define RDR(dev) (DEV_DATA(dev)->port + REG_RDR * UART_REG_ADDR_INTERVAL)
-#define BRDL(dev) (DEV_DATA(dev)->port + REG_BRDL * UART_REG_ADDR_INTERVAL)
-#define BRDH(dev) (DEV_DATA(dev)->port + REG_BRDH * UART_REG_ADDR_INTERVAL)
-#define IER(dev) (DEV_DATA(dev)->port + REG_IER * UART_REG_ADDR_INTERVAL)
-#define IIR(dev) (DEV_DATA(dev)->port + REG_IIR * UART_REG_ADDR_INTERVAL)
-#define FCR(dev) (DEV_DATA(dev)->port + REG_FCR * UART_REG_ADDR_INTERVAL)
-#define LCR(dev) (DEV_DATA(dev)->port + REG_LCR * UART_REG_ADDR_INTERVAL)
-#define MDC(dev) (DEV_DATA(dev)->port + REG_MDC * UART_REG_ADDR_INTERVAL)
-#define LSR(dev) (DEV_DATA(dev)->port + REG_LSR * UART_REG_ADDR_INTERVAL)
-#define MSR(dev) (DEV_DATA(dev)->port + REG_MSR * UART_REG_ADDR_INTERVAL)
-#define DLF(dev) (DEV_DATA(dev)->port + REG_DLF)
-#define PCP(dev) (DEV_DATA(dev)->port + REG_PCP)
+#define THR(dev) (DEV_CFG(dev)->devconf.port + REG_THR * UART_REG_ADDR_INTERVAL)
+#define RDR(dev) (DEV_CFG(dev)->devconf.port + REG_RDR * UART_REG_ADDR_INTERVAL)
+#define BRDL(dev) \
+	(DEV_CFG(dev)->devconf.port + REG_BRDL * UART_REG_ADDR_INTERVAL)
+#define BRDH(dev) \
+	(DEV_CFG(dev)->devconf.port + REG_BRDH * UART_REG_ADDR_INTERVAL)
+#define IER(dev) (DEV_CFG(dev)->devconf.port + REG_IER * UART_REG_ADDR_INTERVAL)
+#define IIR(dev) (DEV_CFG(dev)->devconf.port + REG_IIR * UART_REG_ADDR_INTERVAL)
+#define FCR(dev) (DEV_CFG(dev)->devconf.port + REG_FCR * UART_REG_ADDR_INTERVAL)
+#define LCR(dev) (DEV_CFG(dev)->devconf.port + REG_LCR * UART_REG_ADDR_INTERVAL)
+#define MDC(dev) (DEV_CFG(dev)->devconf.port + REG_MDC * UART_REG_ADDR_INTERVAL)
+#define LSR(dev) (DEV_CFG(dev)->devconf.port + REG_LSR * UART_REG_ADDR_INTERVAL)
+#define MSR(dev) (DEV_CFG(dev)->devconf.port + REG_MSR * UART_REG_ADDR_INTERVAL)
+#define DLF(dev) (DEV_CFG(dev)->devconf.port + REG_DLF)
+#define PCP(dev) (DEV_CFG(dev)->devconf.port + REG_PCP)
 
 #define IIRC(dev) (DEV_DATA(dev)->iir_cache)
 
@@ -219,65 +244,44 @@
 #endif
 #endif /* UART_NS16550_ACCESS_IOPORT */
 
-
-struct uart_ns16550_device_config {
-	u32_t sys_clk_freq;
-
-#ifdef CONFIG_UART_INTERRUPT_DRIVEN
-	uart_irq_config_func_t	irq_config_func;
+#ifdef CONFIG_UART_NS16550_ACCESS_WORD_ONLY
+#undef INBYTE
+#define INBYTE(x) INWORD(x)
+#undef OUTBYTE
+#define OUTBYTE(x, d) OUTWORD(x, d)
 #endif
 
-#ifdef CONFIG_UART_NS16550_PCP
+/* device config */
+struct uart_ns16550_device_config {
+	struct uart_device_config devconf;
+#ifdef UART_NS16550_PCP_ENABLED
 	u32_t pcp;
+#endif
+
+#ifdef UART_NS16550_PCIE_ENABLED
+	bool pcie;
+	pcie_bdf_t pcie_bdf;
+	pcie_id_t pcie_id;
 #endif
 };
 
 /** Device data structure */
 struct uart_ns16550_dev_data_t {
-	u32_t port;
-	u32_t baud_rate;	/**< Baud rate */
+	struct uart_config uart_config;
 	u8_t options;	/**< Serial port options */
-
-#ifdef CONFIG_PCI
-	struct pci_dev_info  pci_dev;
-#endif /* CONFIG_PCI */
 
 #ifdef CONFIG_UART_INTERRUPT_DRIVEN
 	u8_t iir_cache;	/**< cache of IIR since it clears when read */
-	uart_irq_callback_user_data_t cb;	/**< Callback function pointer */
+	uart_irq_callback_user_data_t cb;  /**< Callback function pointer */
 	void *cb_data;	/**< Callback function arg */
 #endif
 
-#ifdef CONFIG_UART_NS16550_DLF
+#ifdef UART_NS16550_DLF_ENABLED
 	u8_t dlf;		/**< DLF value */
 #endif
 };
 
 static const struct uart_driver_api uart_ns16550_driver_api;
-
-#ifdef CONFIG_UART_NS16550_DLF
-static inline void set_dlf(struct device *dev, u32_t val)
-{
-	struct uart_ns16550_dev_data_t * const dev_data = DEV_DATA(dev);
-
-	OUTBYTE(DLF(dev), val);
-	dev_data->dlf = val;
-}
-#endif
-
-#ifdef CONFIG_UART_NS16550_PCP
-static inline void set_pcp(struct device *dev)
-{
-	const struct uart_ns16550_device_config * const dev_cfg = DEV_CFG(dev);
-	u32_t pcp = dev_cfg->pcp;
-
-	if (pcp) {
-		pcp |= PCP_EN;
-		OUTWORD(PCP(dev), pcp & ~PCP_UPDATE);
-		OUTWORD(PCP(dev), pcp | PCP_UPDATE);
-	}
-}
-#endif
 
 static void set_baud_rate(struct device *dev, u32_t baud_rate)
 {
@@ -286,12 +290,12 @@ static void set_baud_rate(struct device *dev, u32_t baud_rate)
 	u32_t divisor; /* baud rate divisor */
 	u8_t lcr_cache;
 
-	if ((baud_rate != 0U) && (dev_cfg->sys_clk_freq != 0U)) {
+	if ((baud_rate != 0U) && (dev_cfg->devconf.sys_clk_freq != 0U)) {
 		/*
 		 * calculate baud rate divisor. a variant of
 		 * (u32_t)(dev_cfg->sys_clk_freq / (16.0 * baud_rate) + 0.5)
 		 */
-		divisor = ((dev_cfg->sys_clk_freq + (baud_rate << 3))
+		divisor = ((dev_cfg->devconf.sys_clk_freq + (baud_rate << 3))
 					/ baud_rate) >> 4;
 
 		/* set the DLAB to access the baud rate divisor registers */
@@ -303,60 +307,31 @@ static void set_baud_rate(struct device *dev, u32_t baud_rate)
 		/* restore the DLAB to access the baud rate divisor registers */
 		OUTBYTE(LCR(dev), lcr_cache);
 
-		dev_data->baud_rate = baud_rate;
+		dev_data->uart_config.baudrate = baud_rate;
 	}
 }
 
-#if defined(CONFIG_UART_NS16550_PCI)
-static inline int ns16550_pci_uart_scan(struct device *dev)
+static int uart_ns16550_configure(struct device *dev,
+				const struct uart_config *cfg)
 {
 	struct uart_ns16550_dev_data_t * const dev_data = DEV_DATA(dev);
-
-	if (dev_data->pci_dev.vendor_id == 0x0000) {
-		return -EINVAL;
-	}
-
-	pci_bus_scan_init();
-
-	if (!pci_bus_scan(&dev_data->pci_dev)) {
-		return 0;
-	}
-
-#ifdef CONFIG_PCI_ENUMERATION
-	dev_data->port = dev_data->pci_dev.addr;
-#endif
-
-	pci_enable_regs(&dev_data->pci_dev);
-
-	return 1;
-}
-
-#else
-
-#define ns16550_pci_uart_scan(_unused_) (1)
-
-#endif /* CONFIG_UART_NS16550_PCI */
-
-/**
- * @brief Initialize individual UART port
- *
- * This routine is called to reset the chip in a quiescent state.
- *
- * @param dev UART device struct
- *
- * @return 0 if successful, failed otherwise
- */
-static int uart_ns16550_init(struct device *dev)
-{
-	struct uart_ns16550_dev_data_t * const dev_data = DEV_DATA(dev);
+	struct uart_ns16550_device_config * const dev_cfg = DEV_CFG(dev);
 
 	unsigned int old_level;     /* old interrupt lock level */
 	u8_t mdc = 0U;
 
-	if (!ns16550_pci_uart_scan(dev)) {
-		dev->driver_api = NULL;
-		return -ENOTSUP;
+	ARG_UNUSED(dev_cfg);
+
+#ifdef UART_NS16550_PCIE_ENABLED
+	if (dev_cfg->pcie) {
+		if (!pcie_probe(dev_cfg->pcie_bdf, dev_cfg->pcie_id)) {
+			return -EINVAL;
+		}
+
+		dev_cfg->devconf.port = pcie_get_mbar(dev_cfg->pcie_bdf, 0);
+		pcie_set_cmd(dev_cfg->pcie_bdf, PCIE_CONF_CMDSTAT_MEM, true);
 	}
+#endif
 
 #ifdef CONFIG_UART_INTERRUPT_DRIVEN
 	dev_data->iir_cache = 0U;
@@ -364,22 +339,72 @@ static int uart_ns16550_init(struct device *dev)
 
 	old_level = irq_lock();
 
-#ifdef CONFIG_UART_NS16550_DLF
-	set_dlf(dev, dev_data->dlf);
+#ifdef UART_NS16550_DLF_ENABLED
+	OUTBYTE(DLF(dev), dev_data->dlf);
 #endif
 
-#ifdef CONFIG_UART_NS16550_PCP
-	set_pcp(dev);
+#ifdef UART_NS16550_PCP_ENABLED
+	u32_t pcp = dev_cfg->pcp;
+
+	if (pcp) {
+		pcp |= PCP_EN;
+		OUTWORD(PCP(dev), pcp & ~PCP_UPDATE);
+		OUTWORD(PCP(dev), pcp | PCP_UPDATE);
+	}
 #endif
 
-	set_baud_rate(dev, dev_data->baud_rate);
+	set_baud_rate(dev, cfg->baudrate);
 
-	/* 8 data bits, 1 stop bit, no parity, clear DLAB */
-	OUTBYTE(LCR(dev), LCR_CS8 | LCR_1_STB | LCR_PDIS);
+	/* Local structure to hold temporary values to pass to OUTBYTE() */
+	struct uart_config uart_cfg;
+
+	switch (cfg->data_bits) {
+	case UART_CFG_DATA_BITS_5:
+		uart_cfg.data_bits = LCR_CS5;
+		break;
+	case UART_CFG_DATA_BITS_6:
+		uart_cfg.data_bits = LCR_CS6;
+		break;
+	case UART_CFG_DATA_BITS_7:
+		uart_cfg.data_bits = LCR_CS7;
+		break;
+	case UART_CFG_DATA_BITS_8:
+		uart_cfg.data_bits = LCR_CS8;
+		break;
+	default:
+		return -ENOTSUP;
+	}
+
+	switch (cfg->stop_bits) {
+	case UART_CFG_STOP_BITS_1:
+		uart_cfg.stop_bits = LCR_1_STB;
+		break;
+	case UART_CFG_STOP_BITS_2:
+		uart_cfg.stop_bits = LCR_2_STB;
+		break;
+	default:
+		return -ENOTSUP;
+	}
+
+	switch (cfg->parity) {
+	case UART_CFG_PARITY_NONE:
+		uart_cfg.parity = LCR_PDIS;
+		break;
+	case UART_CFG_PARITY_EVEN:
+		uart_cfg.parity = LCR_EPS;
+		break;
+	default:
+		return -ENOTSUP;
+	}
+
+	/* data bits, stop bits, parity, clear DLAB */
+	OUTBYTE(LCR(dev),
+		uart_cfg.data_bits | uart_cfg.stop_bits | uart_cfg.parity);
 
 	mdc = MCR_OUT2 | MCR_RTS | MCR_DTR;
-	if ((dev_data->options & UART_OPTION_AFCE) == UART_OPTION_AFCE)
+	if ((dev_data->options & UART_OPTION_AFCE) == UART_OPTION_AFCE) {
 		mdc |= MCR_AFCE;
+	}
 
 	OUTBYTE(MDC(dev), mdc);
 
@@ -403,8 +428,37 @@ static int uart_ns16550_init(struct device *dev)
 
 	irq_unlock(old_level);
 
+	return 0;
+};
+
+static int uart_ns16550_config_get(struct device *dev, struct uart_config *cfg)
+{
+	struct uart_ns16550_dev_data_t *data = DEV_DATA(dev);
+
+	cfg->baudrate = data->uart_config.baudrate;
+	cfg->parity = data->uart_config.parity;
+	cfg->stop_bits = data->uart_config.stop_bits;
+	cfg->data_bits = data->uart_config.data_bits;
+	cfg->flow_ctrl = data->uart_config.flow_ctrl;
+
+	return 0;
+}
+
+/**
+ * @brief Initialize individual UART port
+ *
+ * This routine is called to reset the chip in a quiescent state.
+ *
+ * @param dev UART device struct
+ *
+ * @return 0 if successful, failed otherwise
+ */
+static int uart_ns16550_init(struct device *dev)
+{
+	uart_ns16550_configure(dev, &DEV_DATA(dev)->uart_config);
+
 #ifdef CONFIG_UART_INTERRUPT_DRIVEN
-	DEV_CFG(dev)->irq_config_func(dev);
+	DEV_CFG(dev)->devconf.irq_config_func(dev);
 #endif
 
 	return 0;
@@ -420,8 +474,9 @@ static int uart_ns16550_init(struct device *dev)
  */
 static int uart_ns16550_poll_in(struct device *dev, unsigned char *c)
 {
-	if ((INBYTE(LSR(dev)) & LSR_RXRDY) == 0x00)
+	if ((INBYTE(LSR(dev)) & LSR_RXRDY) == 0x00) {
 		return (-1);
+	}
 
 	/* got a character */
 	*c = INBYTE(RDR(dev));
@@ -445,8 +500,8 @@ static void uart_ns16550_poll_out(struct device *dev,
 					   unsigned char c)
 {
 	/* wait for transmitter to ready to accept a character */
-	while ((INBYTE(LSR(dev)) & LSR_THRE) == 0)
-		;
+	while ((INBYTE(LSR(dev)) & LSR_THRE) == 0) {
+	}
 
 	OUTBYTE(THR(dev), c);
 }
@@ -457,7 +512,7 @@ static void uart_ns16550_poll_out(struct device *dev,
  * @param dev UART device struct
  *
  * @return one of UART_ERROR_OVERRUN, UART_ERROR_PARITY, UART_ERROR_FRAMING,
- * UART_ERROR_BREAK if an error was detected, 0 otherwise.
+ * UART_BREAK if an error was detected, 0 otherwise.
  */
 static int uart_ns16550_err_check(struct device *dev)
 {
@@ -697,15 +752,15 @@ static int uart_ns16550_line_ctrl_set(struct device *dev,
 	u32_t mdc, chg;
 
 	switch (ctrl) {
-	case LINE_CTRL_BAUD_RATE:
+	case UART_LINE_CTRL_BAUD_RATE:
 		set_baud_rate(dev, val);
 		return 0;
 
-	case LINE_CTRL_RTS:
-	case LINE_CTRL_DTR:
+	case UART_LINE_CTRL_RTS:
+	case UART_LINE_CTRL_DTR:
 		mdc = INBYTE(MDC(dev));
 
-		if (ctrl == LINE_CTRL_RTS) {
+		if (ctrl == UART_LINE_CTRL_RTS) {
 			chg = MCR_RTS;
 		} else {
 			chg = MCR_DTR;
@@ -738,15 +793,14 @@ static int uart_ns16550_line_ctrl_set(struct device *dev,
  */
 static int uart_ns16550_drv_cmd(struct device *dev, u32_t cmd, u32_t p)
 {
-	switch (cmd) {
-
-#ifdef CONFIG_UART_NS16550_DLF
-	case CMD_SET_DLF:
-		set_dlf(dev, p);
+#ifdef UART_NS16550_DLF_ENABLED
+	if (cmd == CMD_SET_DLF) {
+		struct uart_ns16550_dev_data_t * const dev_data = DEV_DATA(dev);
+		dev_data->dlf = p;
+		OUTBYTE(DLF(dev), dev_data->dlf);
 		return 0;
-#endif
-
 	}
+#endif
 
 	return -ENOTSUP;
 }
@@ -758,6 +812,8 @@ static const struct uart_driver_api uart_ns16550_driver_api = {
 	.poll_in = uart_ns16550_poll_in,
 	.poll_out = uart_ns16550_poll_out,
 	.err_check = uart_ns16550_err_check,
+	.configure = uart_ns16550_configure,
+	.config_get = uart_ns16550_config_get,
 #ifdef CONFIG_UART_INTERRUPT_DRIVEN
 
 	.fifo_fill = uart_ns16550_fifo_fill,
@@ -787,233 +843,17 @@ static const struct uart_driver_api uart_ns16550_driver_api = {
 };
 
 #ifdef CONFIG_UART_NS16550_PORT_0
-
-#ifdef CONFIG_UART_INTERRUPT_DRIVEN
-static void irq_config_func_0(struct device *port);
+#include <uart_ns16550_port_0.h>
 #endif
-
-static const struct uart_ns16550_device_config uart_ns16550_dev_cfg_0 = {
-	.sys_clk_freq = DT_UART_NS16550_PORT_0_CLK_FREQ,
-
-#ifdef CONFIG_UART_INTERRUPT_DRIVEN
-	.irq_config_func = irq_config_func_0,
-#endif
-
-#ifdef CONFIG_UART_NS16550_PORT_0_PCP
-	.pcp = CONFIG_UART_NS16550_PORT_0_PCP
-#endif
-};
-
-static struct uart_ns16550_dev_data_t uart_ns16550_dev_data_0 = {
-#ifdef CONFIG_UART_NS16550_PORT_0_PCI
-	.pci_dev.class_type = UART_NS16550_PORT_0_PCI_CLASS,
-	.pci_dev.bus = UART_NS16550_PORT_0_PCI_BUS,
-	.pci_dev.dev = UART_NS16550_PORT_0_PCI_DEV,
-	.pci_dev.vendor_id = UART_NS16550_PORT_0_PCI_VENDOR_ID,
-	.pci_dev.device_id = UART_NS16550_PORT_0_PCI_DEVICE_ID,
-	.pci_dev.function = UART_NS16550_PORT_0_PCI_FUNC,
-	.pci_dev.bar = UART_NS16550_PORT_0_PCI_BAR,
-#endif /* CONFIG_UART_NS16550_PORT_0_PCI */
-
-	.port = DT_UART_NS16550_PORT_0_BASE_ADDR,
-	.baud_rate = DT_UART_NS16550_PORT_0_BAUD_RATE,
-	.options = CONFIG_UART_NS16550_PORT_0_OPTIONS,
-
-#ifdef CONFIG_UART_NS16550_PORT_0_DLF
-	.dlf = CONFIG_UART_NS16550_PORT_0_DLF,
-#endif
-};
-
-DEVICE_AND_API_INIT(uart_ns16550_0, DT_UART_NS16550_PORT_0_NAME, &uart_ns16550_init,
-		    &uart_ns16550_dev_data_0, &uart_ns16550_dev_cfg_0,
-		    PRE_KERNEL_1, CONFIG_KERNEL_INIT_PRIORITY_DEVICE,
-		    &uart_ns16550_driver_api);
-
-#ifdef CONFIG_UART_INTERRUPT_DRIVEN
-static void irq_config_func_0(struct device *dev)
-{
-	ARG_UNUSED(dev);
-
-	IRQ_CONNECT(DT_UART_NS16550_PORT_0_IRQ,
-		    DT_UART_NS16550_PORT_0_IRQ_PRI,
-		    uart_ns16550_isr, DEVICE_GET(uart_ns16550_0),
-		    DT_UART_NS16550_PORT_0_IRQ_FLAGS);
-	irq_enable(DT_UART_NS16550_PORT_0_IRQ);
-}
-#endif
-
-#endif /* CONFIG_UART_NS16550_PORT_0 */
 
 #ifdef CONFIG_UART_NS16550_PORT_1
-
-#ifdef CONFIG_UART_INTERRUPT_DRIVEN
-static void irq_config_func_1(struct device *port);
+#include <uart_ns16550_port_1.h>
 #endif
-
-static const struct uart_ns16550_device_config uart_ns16550_dev_cfg_1 = {
-	.sys_clk_freq = DT_UART_NS16550_PORT_1_CLK_FREQ,
-
-#ifdef CONFIG_UART_INTERRUPT_DRIVEN
-	.irq_config_func = irq_config_func_1,
-#endif
-
-#ifdef CONFIG_UART_NS16550_PORT_1_PCP
-	.pcp = CONFIG_UART_NS16550_PORT_1_PCP
-#endif
-};
-
-static struct uart_ns16550_dev_data_t uart_ns16550_dev_data_1 = {
-#ifdef CONFIG_UART_NS16550_PORT_1_PCI
-	.pci_dev.class_type = UART_NS16550_PORT_1_PCI_CLASS,
-	.pci_dev.bus = UART_NS16550_PORT_1_PCI_BUS,
-	.pci_dev.dev = UART_NS16550_PORT_1_PCI_DEV,
-	.pci_dev.vendor_id = UART_NS16550_PORT_1_PCI_VENDOR_ID,
-	.pci_dev.device_id = UART_NS16550_PORT_1_PCI_DEVICE_ID,
-	.pci_dev.function = UART_NS16550_PORT_1_PCI_FUNC,
-	.pci_dev.bar = UART_NS16550_PORT_1_PCI_BAR,
-#endif /* CONFIG_UART_NS16550_PORT_1_PCI */
-
-	.port = DT_UART_NS16550_PORT_1_BASE_ADDR,
-	.baud_rate = DT_UART_NS16550_PORT_1_BAUD_RATE,
-	.options = CONFIG_UART_NS16550_PORT_1_OPTIONS,
-
-#ifdef CONFIG_UART_NS16550_PORT_1_DLF
-	.dlf = CONFIG_UART_NS16550_PORT_1_DLF,
-#endif
-};
-
-DEVICE_AND_API_INIT(uart_ns16550_1, DT_UART_NS16550_PORT_1_NAME, &uart_ns16550_init,
-		    &uart_ns16550_dev_data_1, &uart_ns16550_dev_cfg_1,
-		    PRE_KERNEL_1, CONFIG_KERNEL_INIT_PRIORITY_DEVICE,
-		    &uart_ns16550_driver_api);
-
-#ifdef CONFIG_UART_INTERRUPT_DRIVEN
-static void irq_config_func_1(struct device *dev)
-{
-	ARG_UNUSED(dev);
-
-	IRQ_CONNECT(DT_UART_NS16550_PORT_1_IRQ,
-		    DT_UART_NS16550_PORT_1_IRQ_PRI,
-		    uart_ns16550_isr, DEVICE_GET(uart_ns16550_1),
-		    DT_UART_NS16550_PORT_1_IRQ_FLAGS);
-	irq_enable(DT_UART_NS16550_PORT_1_IRQ);
-}
-#endif
-
-#endif /* CONFIG_UART_NS16550_PORT_1 */
 
 #ifdef CONFIG_UART_NS16550_PORT_2
-
-#ifdef CONFIG_UART_INTERRUPT_DRIVEN
-static void irq_config_func_2(struct device *port);
+#include <uart_ns16550_port_2.h>
 #endif
-
-static const struct uart_ns16550_device_config uart_ns16550_dev_cfg_2 = {
-	.sys_clk_freq = DT_UART_NS16550_PORT_2_CLK_FREQ,
-
-#ifdef CONFIG_UART_INTERRUPT_DRIVEN
-	.irq_config_func = irq_config_func_2,
-#endif
-
-#ifdef CONFIG_UART_NS16550_PORT_2_PCP
-	.pcp = CONFIG_UART_NS16550_PORT_2_PCP
-#endif
-};
-
-static struct uart_ns16550_dev_data_t uart_ns16550_dev_data_2 = {
-#ifdef CONFIG_UART_NS16550_PORT_2_PCI
-	.pci_dev.class_type = UART_NS16550_PORT_2_PCI_CLASS,
-	.pci_dev.bus = UART_NS16550_PORT_2_PCI_BUS,
-	.pci_dev.dev = UART_NS16550_PORT_2_PCI_DEV,
-	.pci_dev.vendor_id = UART_NS16550_PORT_2_PCI_VENDOR_ID,
-	.pci_dev.device_id = UART_NS16550_PORT_2_PCI_DEVICE_ID,
-	.pci_dev.function = UART_NS16550_PORT_2_PCI_FUNC,
-	.pci_dev.bar = UART_NS16550_PORT_2_PCI_BAR,
-#endif /* CONFIG_UART_NS16550_PORT_2_PCI */
-
-	.port = DT_UART_NS16550_PORT_2_BASE_ADDR,
-	.baud_rate = DT_UART_NS16550_PORT_2_BAUD_RATE,
-	.options = CONFIG_UART_NS16550_PORT_2_OPTIONS,
-
-#ifdef CONFIG_UART_NS16550_PORT_2_DLF
-	.dlf = CONFIG_UART_NS16550_PORT_2_DLF,
-#endif
-};
-
-DEVICE_AND_API_INIT(uart_ns16550_2, DT_UART_NS16550_PORT_2_NAME, &uart_ns16550_init,
-		    &uart_ns16550_dev_data_2, &uart_ns16550_dev_cfg_2,
-		    PRE_KERNEL_1, CONFIG_KERNEL_INIT_PRIORITY_DEVICE,
-		    &uart_ns16550_driver_api);
-
-#ifdef CONFIG_UART_INTERRUPT_DRIVEN
-static void irq_config_func_2(struct device *dev)
-{
-	ARG_UNUSED(dev);
-
-	IRQ_CONNECT(DT_UART_NS16550_PORT_2_IRQ,
-		    DT_UART_NS16550_PORT_2_IRQ_PRI,
-		    uart_ns16550_isr, DEVICE_GET(uart_ns16550_2),
-		    DT_UART_NS16550_PORT_2_IRQ_FLAGS);
-	irq_enable(DT_UART_NS16550_PORT_2_IRQ);
-}
-#endif
-
-#endif /* CONFIG_UART_NS16550_PORT_2 */
 
 #ifdef CONFIG_UART_NS16550_PORT_3
-
-#ifdef CONFIG_UART_INTERRUPT_DRIVEN
-static void irq_config_func_3(struct device *port);
+#include <uart_ns16550_port_3.h>
 #endif
-
-static const struct uart_ns16550_device_config uart_ns16550_dev_cfg_3 = {
-	.sys_clk_freq = DT_UART_NS16550_PORT_3_CLK_FREQ,
-
-#ifdef CONFIG_UART_INTERRUPT_DRIVEN
-	.irq_config_func = irq_config_func_3,
-#endif
-
-#ifdef CONFIG_UART_NS16550_PORT_3_PCP
-	.pcp = CONFIG_UART_NS16550_PORT_3_PCP
-#endif
-};
-
-static struct uart_ns16550_dev_data_t uart_ns16550_dev_data_3 = {
-#ifdef CONFIG_UART_NS16550_PORT_3_PCI
-	.pci_dev.class_type = UART_NS16550_PORT_3_PCI_CLASS,
-	.pci_dev.bus = UART_NS16550_PORT_3_PCI_BUS,
-	.pci_dev.dev = UART_NS16550_PORT_3_PCI_DEV,
-	.pci_dev.vendor_id = UART_NS16550_PORT_3_PCI_VENDOR_ID,
-	.pci_dev.device_id = UART_NS16550_PORT_3_PCI_DEVICE_ID,
-	.pci_dev.function = UART_NS16550_PORT_3_PCI_FUNC,
-	.pci_dev.bar = UART_NS16550_PORT_3_PCI_BAR,
-#endif /* CONFIG_UART_NS16550_PORT_3_PCI */
-
-	.port = DT_UART_NS16550_PORT_3_BASE_ADDR,
-	.baud_rate = DT_UART_NS16550_PORT_3_BAUD_RATE,
-	.options = CONFIG_UART_NS16550_PORT_3_OPTIONS,
-
-#ifdef CONFIG_UART_NS16550_PORT_3_DLF
-	.dlf = CONFIG_UART_NS16550_PORT_3_DLF,
-#endif
-};
-
-DEVICE_AND_API_INIT(uart_ns16550_3, DT_UART_NS16550_PORT_3_NAME, &uart_ns16550_init,
-		    &uart_ns16550_dev_data_3, &uart_ns16550_dev_cfg_3,
-		    PRE_KERNEL_1, CONFIG_KERNEL_INIT_PRIORITY_DEVICE,
-		    &uart_ns16550_driver_api);
-
-#ifdef CONFIG_UART_INTERRUPT_DRIVEN
-static void irq_config_func_3(struct device *dev)
-{
-	ARG_UNUSED(dev);
-
-	IRQ_CONNECT(DT_UART_NS16550_PORT_3_IRQ,
-		    DT_UART_NS16550_PORT_3_IRQ_PRI,
-		    uart_ns16550_isr, DEVICE_GET(uart_ns16550_3),
-		    DT_UART_NS16550_PORT_3_IRQ_FLAGS);
-	irq_enable(DT_UART_NS16550_PORT_3_IRQ);
-}
-#endif
-
-#endif /* CONFIG_UART_NS16550_PORT_3 */

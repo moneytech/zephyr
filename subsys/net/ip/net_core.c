@@ -27,6 +27,7 @@ LOG_MODULE_REGISTER(net_core, CONFIG_NET_CORE_LOG_LEVEL);
 #include <net/net_core.h>
 #include <net/dns_resolve.h>
 #include <net/gptp.h>
+#include <net/websocket.h>
 
 #if defined(CONFIG_NET_LLDP)
 #include <net/lldp.h>
@@ -334,6 +335,7 @@ int net_send_data(struct net_pkt *pkt)
 
 static void net_rx(struct net_if *iface, struct net_pkt *pkt)
 {
+	bool is_loopback = false;
 	size_t pkt_len;
 
 	pkt_len = net_pkt_get_len(pkt);
@@ -342,7 +344,15 @@ static void net_rx(struct net_if *iface, struct net_pkt *pkt)
 
 	net_stats_update_bytes_recv(iface, pkt_len);
 
-	processing_data(pkt, false);
+	if (IS_ENABLED(CONFIG_NET_LOOPBACK)) {
+#ifdef CONFIG_NET_L2_DUMMY
+		if (net_if_l2(iface) == &NET_L2_GET_NAME(DUMMY)) {
+			is_loopback = true;
+		}
+#endif
+	}
+
+	processing_data(pkt, is_loopback);
 
 	net_print_statistics();
 	net_pkt_print();
@@ -388,7 +398,7 @@ int net_recv_data(struct net_if *iface, struct net_pkt *pkt)
 		return -ENODATA;
 	}
 
-	if (!atomic_test_bit(iface->if_dev->flags, NET_IF_UP)) {
+	if (!net_if_flag_is_set(iface, NET_IF_UP)) {
 		return -ENETDOWN;
 	}
 
@@ -417,9 +427,13 @@ static inline void l3_init(void)
 
 	net_ipv4_autoconf_init();
 
-#if defined(CONFIG_NET_UDP) || defined(CONFIG_NET_TCP)
-	net_conn_init();
-#endif
+	if (IS_ENABLED(CONFIG_NET_UDP) ||
+	    IS_ENABLED(CONFIG_NET_TCP) ||
+	    IS_ENABLED(CONFIG_NET_SOCKETS_PACKET) ||
+	    IS_ENABLED(CONFIG_NET_SOCKETS_CAN)) {
+		net_conn_init();
+	}
+
 	net_tcp_init();
 
 	net_route_init();
@@ -437,6 +451,9 @@ static inline int services_init(void)
 	}
 
 	dns_init_resolver();
+	websocket_init();
+
+	net_coap_init();
 
 	net_shell_init();
 

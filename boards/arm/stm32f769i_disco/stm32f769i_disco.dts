@@ -16,24 +16,25 @@
 		zephyr,shell-uart = &usart1;
 		zephyr,sram = &sram0;
 		zephyr,flash = &flash0;
+		zephyr,dtcm = &dtcm;
 	};
 
 	leds {
 		compatible = "gpio-leds";
 		red_led_1:led_1 {
-			gpios = <&gpioj 13 GPIO_INT_ACTIVE_HIGH>;
+			gpios = <&gpioj 13 GPIO_ACTIVE_HIGH>;
 			label = "User LD1";
 		};
 		green_led_2:led_2 {
-			gpios = <&gpioj 5 GPIO_INT_ACTIVE_HIGH>;
+			gpios = <&gpioj 5 GPIO_ACTIVE_HIGH>;
 			label = "User LD2";
 		};
 		green_led_3:led_3 {
-			gpios = <&gpioa 12 GPIO_INT_ACTIVE_HIGH>;
+			gpios = <&gpioa 12 GPIO_ACTIVE_HIGH>;
 			label = "User LD3";
 		};
 		red_led_4:led_4 {
-			gpios = <&gpiod 4 GPIO_INT_ACTIVE_HIGH>;
+			gpios = <&gpiod 4 GPIO_ACTIVE_HIGH>;
 			label = "User LD4";
 		};
 	};
@@ -42,7 +43,7 @@
 		compatible = "gpio-keys";
 		user_button: button {
 			label = "User";
-			gpios = <&gpioa 0 GPIO_INT_ACTIVE_HIGH>;
+			gpios = <&gpioa 0 GPIO_ACTIVE_HIGH>;
 		};
 	};
 
@@ -61,21 +62,19 @@ arduino_serial: &usart6 {};
 
 &usart1 {
 	current-speed = <115200>;
-	pinctrl-names = "default";
-	status = "ok";
+	status = "okay";
 };
 
 &usart6 {
 	current-speed = <115200>;
-	pinctrl-names = "default";
-	status = "ok";
+	status = "okay";
 };
 
 &i2c1 {
-	status = "ok";
+	status = "okay";
 	clock-frequency = <I2C_BITRATE_FAST>;
 };
 
 &spi2 {
-	status = "ok";
+	status = "okay";
 };

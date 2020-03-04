@@ -1,11 +1,7 @@
-# Kconfig - drivers configuration options
+# drivers configuration options
 
-#
 # Copyright (c) 2015 Intel Corporation
-#
 # SPDX-License-Identifier: Apache-2.0
-#
-
 
 menu "Device Drivers"
 
@@ -13,7 +9,11 @@ source "drivers/bluetooth/Kconfig"
 
 source "drivers/ieee802154/Kconfig"
 
+source "drivers/lora/Kconfig"
+
 source "drivers/console/Kconfig"
+
+source "drivers/debug/Kconfig"
 
 source "drivers/ethernet/Kconfig"
 
@@ -27,7 +27,7 @@ source "drivers/timer/Kconfig"
 
 source "drivers/entropy/Kconfig"
 
-source "drivers/pci/Kconfig"
+source "drivers/pcie/Kconfig"
 
 source "drivers/gpio/Kconfig"
 
@@ -45,8 +45,6 @@ source "drivers/pinmux/Kconfig"
 
 source "drivers/adc/Kconfig"
 
-source "drivers/rtc/Kconfig"
-
 source "drivers/watchdog/Kconfig"
 
 source "drivers/clock_control/Kconfig"
@@ -54,8 +52,6 @@ source "drivers/clock_control/Kconfig"
 source "drivers/ptp_clock/Kconfig"
 
 source "drivers/ipm/Kconfig"
-
-source "drivers/aio/Kconfig"
 
 source "drivers/flash/Kconfig"
 
@@ -86,5 +82,15 @@ source "drivers/audio/Kconfig"
 source "drivers/neural_net/Kconfig"
 
 source "drivers/hwinfo/Kconfig"
+
+source "drivers/espi/Kconfig"
+
+source "drivers/ps2/Kconfig"
+
+source "drivers/kscan/Kconfig"
+
+source "drivers/video/Kconfig"
+
+source "drivers/eeprom/Kconfig"
 
 endmenu

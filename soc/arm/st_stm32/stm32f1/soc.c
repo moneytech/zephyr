@@ -12,7 +12,7 @@
 #include <device.h>
 #include <init.h>
 #include <arch/cpu.h>
-#include <cortex_m/exc.h>
+#include <arch/arm/aarch32/cortex_m/cmsis.h>
 
 /**
  * @brief Perform basic hardware initialization at boot.
@@ -29,8 +29,6 @@ static int stm32f1_init(struct device *arg)
 	ARG_UNUSED(arg);
 
 	key = irq_lock();
-
-	z_clearfaults();
 
 	/* Install default handler that simply resets the CPU
 	 * if configured in the kernel, NOP otherwise

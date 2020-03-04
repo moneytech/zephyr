@@ -49,24 +49,24 @@ extern "C" {
  * in predetermined order in the RAM.
  */
 #define USBD_DEVICE_DESCR_DEFINE(p) \
-	static __in_section(usb, descriptor_##p, 0) __used
+	static __in_section(usb, descriptor_##p, 0) __used __aligned(1)
 #define USBD_CLASS_DESCR_DEFINE(p, instance) \
-	static __in_section(usb, descriptor_##p.1, instance) __used
+	static __in_section(usb, descriptor_##p.1, instance) __used __aligned(1)
 #define USBD_MISC_DESCR_DEFINE(p) \
-	static __in_section(usb, descriptor_##p, 2) __used
+	static __in_section(usb, descriptor_##p, 2) __used __aligned(1)
 #define USBD_USER_DESCR_DEFINE(p) \
-	static __in_section(usb, descriptor_##p, 3) __used
+	static __in_section(usb, descriptor_##p, 3) __used __aligned(1)
 #define USBD_STRING_DESCR_DEFINE(p) \
-	static __in_section(usb, descriptor_##p, 4) __used
+	static __in_section(usb, descriptor_##p, 4) __used __aligned(1)
 #define USBD_TERM_DESCR_DEFINE(p) \
-	static __in_section(usb, descriptor_##p, 5) __used
+	static __in_section(usb, descriptor_##p, 5) __used __aligned(1)
 
 /*
  * This macro should be used to place the struct usb_cfg_data
  * inside usb data section in the RAM.
  */
-#define USBD_CFG_DATA_DEFINE(name) \
-	static __in_section(usb, data, name) __used
+#define USBD_CFG_DATA_DEFINE(p, name) \
+	static __in_section(usb, data_##p, name) __used
 
 /*************************************************************************
  *  USB configuration
@@ -159,19 +159,6 @@ struct usb_interface_cfg_data {
 	 * handler.
 	 */
 	usb_request_handler custom_handler;
-	/**
-	 * This data area, allocated by the application, is used to store
-	 * Class specific command data and must be large enough to store the
-	 * largest payload associated with the largest supported Class'
-	 * command set. This data area may be used for USB IN or OUT
-	 * communications.
-	 */
-	u8_t *payload_data;
-	/**
-	 * This data area, allocated by the application, is used to store
-	 * Vendor specific payload.
-	 */
-	u8_t *vendor_data;
 };
 
 /**
@@ -214,11 +201,11 @@ struct usb_cfg_data {
  * Function to configure USB controller.
  * Configuration parameters must be valid or an error is returned
  *
- * @param[in] config Pointer to configuration structure
+ * @param[in] usb_descriptor USB descriptor table
  *
  * @return 0 on success, negative errno code on fail
  */
-int usb_set_config(struct usb_cfg_data *config);
+int usb_set_config(const u8_t *usb_descriptor);
 
 /**
  * @brief Deconfigure USB controller
@@ -230,18 +217,22 @@ int usb_set_config(struct usb_cfg_data *config);
 int usb_deconfig(void);
 
 /**
- * @brief Enable USB for host/device connection
+ * @brief Enable the USB subsystem and associated hardware
  *
- * Function to enable USB for host/device connection.
- * Upon success, the USB module is no longer clock gated in hardware,
- * it is now capable of transmitting and receiving on the USB bus and
- * of generating interrupts.
+ * This function initializes the USB core subsystem and enables the
+ * corresponding hardware so that it can begin transmitting and receiving
+ * on the USB bus, as well as generating interrupts.
  *
- * @param[in] config Pointer to configuration structure
+ * Class-specific initialization and registration must be performed by the user
+ * before invoking this, so that any data or events on the bus are processed
+ * correctly by the associated class handling code.
+ *
+ * @param[in] status_cb Callback registered by user to notify
+ *                      about USB device controller state.
  *
  * @return 0 on success, negative errno code on fail.
  */
-int usb_enable(struct usb_cfg_data *config);
+int usb_enable(usb_dc_status_callback status_cb);
 
 /**
  * @brief Disable the USB device
@@ -417,6 +408,21 @@ int usb_transfer_sync(u8_t ep, u8_t *data, size_t dlen, unsigned int flags);
  * @return 0 on success, negative errno code on fail.
  */
 void usb_cancel_transfer(u8_t ep);
+
+/**
+ * @brief Cancel all ongoing transfers
+ */
+void usb_cancel_transfers(void);
+
+/**
+ * @brief Check that transfer is ongoing for the endpoint
+ *
+ * @param[in]  ep           Endpoint address corresponding to the one
+ *                          listed in the device configuration table
+ *
+ * @return true if transfer is ongoing, false otherwise.
+ */
+bool usb_transfer_is_busy(u8_t ep);
 
 /**
  * @brief Start the USB remote wakeup procedure

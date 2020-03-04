@@ -11,14 +11,14 @@
 
 extern u32_t _irq_vector_table[];
 
-#if defined(Z_ARCH_IRQ_DIRECT_CONNECT) && defined(CONFIG_GEN_IRQ_VECTOR_TABLE)
+#if defined(ARCH_IRQ_DIRECT_CONNECT) && defined(CONFIG_GEN_IRQ_VECTOR_TABLE)
 #define HAS_DIRECT_IRQS
 #endif
 
 #define ISR1_OFFSET	0
 #define ISR2_OFFSET	1
 
-#if defined(CONFIG_RISCV32)
+#if defined(CONFIG_RISCV)
 /* RISC-V has very few IRQ lines which can be triggered from software */
 #define ISR3_OFFSET	1
 #define ISR5_OFFSET	5
@@ -44,8 +44,8 @@ extern u32_t _irq_vector_table[];
 
 static volatile int trigger_check[TRIG_CHECK_SIZE];
 
-#if defined(CONFIG_ARM)
-#include <arch/arm/cortex_m/cmsis.h>
+#if defined(CONFIG_CPU_CORTEX_M)
+#include <arch/arm/aarch32/cortex_m/cmsis.h>
 
 void trigger_irq(int irq)
 {
@@ -56,7 +56,7 @@ void trigger_irq(int irq)
 	NVIC->STIR = irq;
 #endif
 }
-#elif defined(CONFIG_RISCV32)
+#elif defined(CONFIG_RISCV)
 void trigger_irq(int irq)
 {
 	u32_t mip;

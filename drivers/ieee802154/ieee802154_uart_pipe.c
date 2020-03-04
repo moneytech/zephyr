@@ -20,7 +20,7 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 #include <net/net_if.h>
 #include <net/net_pkt.h>
 
-#include <console/uart_pipe.h>
+#include <drivers/console/uart_pipe.h>
 #include <net/ieee802154_radio.h>
 
 #include "ieee802154_uart_pipe.h"
@@ -66,7 +66,7 @@ static bool received_dest_addr_matched(u8_t *rx_buffer)
 	switch (rx_buffer[DEST_ADDR_TYPE_OFFSET] & DEST_ADDR_TYPE_MASK) {
 	case DEST_ADDR_TYPE_SHORT:
 		/* First check if the destination is broadcast */
-		/* If not broadcast, check if lenght and address matches */
+		/* If not broadcast, check if length and address matches */
 		if (memcmp(&rx_buffer[DEST_ADDR_OFFSET],
 			   BROADCAST_ADDRESS,
 			   SHORT_ADDRESS_SIZE) != 0 &&
@@ -80,7 +80,7 @@ static bool received_dest_addr_matched(u8_t *rx_buffer)
 	break;
 
 	case DEST_ADDR_TYPE_EXTENDED:
-		/* If not broadcast, check if lenght and address matches */
+		/* If not broadcast, check if length and address matches */
 		if (net_if_get_link_addr(upipe->iface)->len !=
 		    EXTENDED_ADDRESS_SIZE ||
 		    memcmp(&rx_buffer[DEST_ADDR_OFFSET],

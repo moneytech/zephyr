@@ -19,7 +19,7 @@
 
 #include <errno.h>
 #include <kernel.h>
-#include <i2c.h>
+#include <drivers/i2c.h>
 #include "i2c_bitbang.h"
 
 /*
@@ -37,17 +37,7 @@
 #define T_BUF		T_LOW
 
 #define NS_TO_SYS_CLOCK_HW_CYCLES(ns) \
-	((u64_t)CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC * (ns) / NSEC_PER_SEC + 1)
-
-static const u32_t delays_fast[] = {
-	[T_LOW] = NS_TO_SYS_CLOCK_HW_CYCLES(1300),
-	[T_HIGH] = NS_TO_SYS_CLOCK_HW_CYCLES(600),
-};
-
-static const u32_t delays_standard[] = {
-	[T_LOW] = NS_TO_SYS_CLOCK_HW_CYCLES(4700),
-	[T_HIGH] = NS_TO_SYS_CLOCK_HW_CYCLES(4000),
-};
+	((u64_t)sys_clock_hw_cycles_per_sec() * (ns) / NSEC_PER_SEC + 1)
 
 int i2c_bitbang_configure(struct i2c_bitbang *context, u32_t dev_config)
 {
@@ -59,10 +49,12 @@ int i2c_bitbang_configure(struct i2c_bitbang *context, u32_t dev_config)
 	/* Setup speed to use */
 	switch (I2C_SPEED_GET(dev_config)) {
 	case I2C_SPEED_STANDARD:
-		context->delays = delays_standard;
+		context->delays[T_LOW]  = NS_TO_SYS_CLOCK_HW_CYCLES(4700);
+		context->delays[T_HIGH] = NS_TO_SYS_CLOCK_HW_CYCLES(4000);
 		break;
 	case I2C_SPEED_FAST:
-		context->delays = delays_fast;
+		context->delays[T_LOW]  = NS_TO_SYS_CLOCK_HW_CYCLES(1300);
+		context->delays[T_HIGH] = NS_TO_SYS_CLOCK_HW_CYCLES(600);
 		break;
 	default:
 		return -ENOTSUP;
@@ -109,6 +101,9 @@ static void i2c_start(struct i2c_bitbang *context)
 	}
 	i2c_set_sda(context, 0);
 	i2c_delay(context->delays[T_HD_STA]);
+
+	i2c_set_scl(context, 0);
+	i2c_delay(context->delays[T_LOW]);
 }
 
 static void i2c_repeated_start(struct i2c_bitbang *context)
@@ -119,6 +114,9 @@ static void i2c_repeated_start(struct i2c_bitbang *context)
 
 static void i2c_stop(struct i2c_bitbang *context)
 {
+	i2c_set_scl(context, 1);
+	i2c_delay(context->delays[T_HIGH]);
+
 	if (i2c_get_sda(context)) {
 		/*
 		 * SDA is already high, so we need to make it low so that
@@ -136,25 +134,28 @@ static void i2c_stop(struct i2c_bitbang *context)
 
 static void i2c_write_bit(struct i2c_bitbang *context, int bit)
 {
-	i2c_set_scl(context, 0);
 	/* SDA hold time is zero, so no need for a delay here */
 	i2c_set_sda(context, bit);
-	i2c_delay(context->delays[T_LOW]);
 	i2c_set_scl(context, 1);
 	i2c_delay(context->delays[T_HIGH]);
+	i2c_set_scl(context, 0);
+	i2c_delay(context->delays[T_LOW]);
 }
 
 static bool i2c_read_bit(struct i2c_bitbang *context)
 {
 	bool bit;
 
-	i2c_set_scl(context, 0);
 	/* SDA hold time is zero, so no need for a delay here */
 	i2c_set_sda(context, 1); /* Stop driving low, so slave has control */
-	i2c_delay(context->delays[T_LOW]);
-	bit = i2c_get_sda(context);
+
 	i2c_set_scl(context, 1);
 	i2c_delay(context->delays[T_HIGH]);
+
+	bit = i2c_get_sda(context);
+
+	i2c_set_scl(context, 0);
+	i2c_delay(context->delays[T_LOW]);
 	return bit;
 }
 

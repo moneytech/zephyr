@@ -13,3 +13,5 @@ supported:
   - pwm
   - spi
   - usb_device
+  - watchdog
+  - can

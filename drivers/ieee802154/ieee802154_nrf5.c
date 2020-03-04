@@ -7,7 +7,11 @@
  */
 
 #define LOG_MODULE_NAME ieee802154_nrf5
+#if defined(CONFIG_IEEE802154_DRIVER_LOG_LEVEL)
 #define LOG_LEVEL CONFIG_IEEE802154_DRIVER_LOG_LEVEL
+#else
+#define LOG_LEVEL LOG_LEVEL_NONE
+#endif
 
 #include <logging/log.h>
 LOG_MODULE_REGISTER(LOG_MODULE_NAME);
@@ -27,13 +31,12 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 #include <net/openthread.h>
 #endif
 
-#include <misc/byteorder.h>
+#include <sys/byteorder.h>
 #include <string.h>
 #include <random/rand32.h>
 
 #include <net/ieee802154_radio.h>
 
-#include "nrf52840.h"
 #include "ieee802154_nrf5.h"
 #include "nrf_802154.h"
 
@@ -118,7 +121,7 @@ static void nrf5_rx_thread(void *arg1, void *arg2, void *arg3)
 		nrf_802154_buffer_free_raw(rx_frame->psdu);
 		rx_frame->psdu = NULL;
 
-		if (CONFIG_IEEE802154_DRIVER_LOG_LEVEL >= LOG_LEVEL_DBG) {
+		if (LOG_LEVEL >= LOG_LEVEL_DBG) {
 			net_analyze_stack(
 				"nRF5 rx stack",
 				Z_THREAD_STACK_BUFFER(nrf5_radio->rx_stack),
@@ -253,6 +256,49 @@ static int nrf5_set_txpower(struct device *dev, s16_t dbm)
 	return 0;
 }
 
+static int handle_ack(struct nrf5_802154_data *nrf5_radio)
+{
+	u8_t ack_len = nrf5_radio->ack_frame.psdu[0] - NRF5_FCS_LENGTH;
+	struct net_pkt *ack_pkt;
+	int err = 0;
+
+	ack_pkt = net_pkt_alloc_with_buffer(nrf5_radio->iface, ack_len,
+					    AF_UNSPEC, 0, K_NO_WAIT);
+	if (!ack_pkt) {
+		LOG_ERR("No free packet available.");
+		err = -ENOMEM;
+		goto free_nrf_ack;
+	}
+
+	/* Upper layers expect the frame to start at the MAC header, skip the
+	 * PHY header (1 byte).
+	 */
+	if (net_pkt_write(ack_pkt, nrf5_radio->ack_frame.psdu + 1,
+			  ack_len) < 0) {
+		LOG_ERR("Failed to write to a packet.");
+		err = -ENOMEM;
+		goto free_net_ack;
+	}
+
+	net_pkt_set_ieee802154_lqi(ack_pkt, nrf5_radio->ack_frame.lqi);
+	net_pkt_set_ieee802154_rssi(ack_pkt, nrf5_radio->ack_frame.rssi);
+
+	net_pkt_cursor_init(ack_pkt);
+
+	if (ieee802154_radio_handle_ack(nrf5_radio->iface, ack_pkt) != NET_OK) {
+		LOG_INF("ACK packet not handled - releasing.");
+	}
+
+free_net_ack:
+	net_pkt_unref(ack_pkt);
+
+free_nrf_ack:
+	nrf_802154_buffer_free_raw(nrf5_radio->ack_frame.psdu);
+	nrf5_radio->ack_frame.psdu = NULL;
+
+	return err;
+}
+
 static int nrf5_tx(struct device *dev,
 		   struct net_pkt *pkt,
 		   struct net_buf *frag)
@@ -291,14 +337,13 @@ static int nrf5_tx(struct device *dev,
 	LOG_DBG("Result: %d", nrf5_data.tx_result);
 
 	if (nrf5_radio->tx_result == NRF_802154_TX_ERROR_NONE) {
-		/* ACK frame not used currently. */
-		if (nrf5_radio->ack != NULL) {
-			nrf_802154_buffer_free_raw(nrf5_radio->ack);
+		if (nrf5_radio->ack_frame.psdu == NULL) {
+			/* No ACK was requested. */
+			return 0;
 		}
 
-		nrf5_radio->ack = NULL;
-
-		return 0;
+		/* Handle ACK packet. */
+		return handle_ack(nrf5_radio);
 	}
 
 	return -EIO;
@@ -340,13 +385,13 @@ static void nrf5_radio_irq(void *arg)
 	nrf_802154_radio_irq_handler();
 }
 
-static void nrf5_config(struct device *dev)
+static void nrf5_irq_config(struct device *dev)
 {
 	ARG_UNUSED(dev);
 
-	IRQ_CONNECT(NRF5_IRQ_RADIO_IRQn, NRF_802154_IRQ_PRIORITY,
+	IRQ_CONNECT(RADIO_IRQn, NRF_802154_IRQ_PRIORITY,
 		    nrf5_radio_irq, NULL, 0);
-	irq_enable(NRF5_IRQ_RADIO_IRQn);
+	irq_enable(RADIO_IRQn);
 }
 
 static int nrf5_init(struct device *dev)
@@ -365,7 +410,7 @@ static int nrf5_init(struct device *dev)
 	k_thread_create(&nrf5_radio->rx_thread, nrf5_radio->rx_stack,
 			CONFIG_IEEE802154_NRF5_RX_STACK_SIZE,
 			nrf5_rx_thread, dev, NULL, NULL,
-			K_PRIO_COOP(2), 0, 0);
+			K_PRIO_COOP(2), 0, K_NO_WAIT);
 
 	k_thread_name_set(&nrf5_radio->rx_thread, "802154 RX");
 
@@ -386,6 +431,47 @@ static void nrf5_iface_init(struct net_if *iface)
 	nrf5_radio->iface = iface;
 
 	ieee802154_init(iface);
+}
+
+int nrf5_configure(struct device *dev, enum ieee802154_config_type type,
+		   const struct ieee802154_config *config)
+{
+	ARG_UNUSED(dev);
+
+	switch (type) {
+	case IEEE802154_CONFIG_AUTO_ACK_FPB:
+		nrf_802154_auto_pending_bit_set(config->auto_ack_fpb.enabled);
+		break;
+
+	case IEEE802154_CONFIG_ACK_FPB:
+		if (config->ack_fpb.enabled) {
+			if (!nrf_802154_pending_bit_for_addr_set(
+						config->ack_fpb.addr,
+						config->ack_fpb.extended)) {
+				return -ENOMEM;
+			}
+
+			break;
+		}
+
+		if (config->ack_fpb.addr != NULL) {
+			if (!nrf_802154_pending_bit_for_addr_clear(
+						config->ack_fpb.addr,
+						config->ack_fpb.extended)) {
+				return -ENOENT;
+			}
+		} else {
+			nrf_802154_pending_bit_for_addr_reset(
+						config->ack_fpb.extended);
+		}
+
+		break;
+
+	default:
+		return -EINVAL;
+	}
+
+	return 0;
 }
 
 /* nRF5 radio driver callbacks */
@@ -422,7 +508,9 @@ void nrf_802154_transmitted_raw(const uint8_t *frame, uint8_t *ack,
 	ARG_UNUSED(lqi);
 
 	nrf5_data.tx_result = NRF_802154_TX_ERROR_NONE;
-	nrf5_data.ack = ack;
+	nrf5_data.ack_frame.psdu = ack;
+	nrf5_data.ack_frame.rssi = power;
+	nrf5_data.ack_frame.lqi = lqi;
 
 	k_sem_give(&nrf5_data.tx_wait);
 }
@@ -454,7 +542,7 @@ void nrf_802154_cca_failed(nrf_802154_cca_error_t error)
 }
 
 static const struct nrf5_802154_config nrf5_radio_cfg = {
-	.irq_config_func = nrf5_config,
+	.irq_config_func = nrf5_irq_config,
 };
 
 static struct ieee802154_radio_api nrf5_radio_api = {
@@ -468,6 +556,7 @@ static struct ieee802154_radio_api nrf5_radio_api = {
 	.start = nrf5_start,
 	.stop = nrf5_stop,
 	.tx = nrf5_tx,
+	.configure = nrf5_configure,
 };
 
 #if defined(CONFIG_NET_L2_IEEE802154)

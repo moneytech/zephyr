@@ -4,39 +4,42 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <stddef.h>
-#include <stdbool.h>
-#include <toolchain.h>
-#include <zephyr/types.h>
-#include <misc/byteorder.h>
-#include <misc/util.h>
+#include <zephyr.h>
+#include <bluetooth/hci.h>
+#include <sys/byteorder.h>
+
+#include "util/util.h"
+#include "util/memq.h"
+#include "util/mayfly.h"
 
 #include "hal/ticker.h"
 #include "hal/ccm.h"
-#include "util/memq.h"
-#include "util/mayfly.h"
+#include "hal/radio.h"
+
 #include "ticker/ticker.h"
 
-#include "util/util.h"
-
 #include "pdu.h"
+#include "ll.h"
 
 #include "lll.h"
 #include "lll_vendor.h"
 #include "lll_adv.h"
 #include "lll_conn.h"
 #include "lll_slave.h"
+#include "lll_filter.h"
 #include "lll_tim_internal.h"
 
 #include "ull_adv_types.h"
 #include "ull_conn_types.h"
+#include "ull_filter.h"
 
 #include "ull_internal.h"
 #include "ull_adv_internal.h"
 #include "ull_conn_internal.h"
 #include "ull_slave_internal.h"
 
-#define LOG_MODULE_NAME bt_ctlr_llsw_ull_slave
+#define BT_DBG_ENABLED IS_ENABLED(CONFIG_BT_DEBUG_HCI_DRIVER)
+#define LOG_MODULE_NAME bt_ctlr_ull_slave
 #include "common/log.h"
 #include <soc.h>
 #include "hal/debug.h"
@@ -51,7 +54,6 @@ void ull_slave_setup(memq_link_t *link, struct node_rx_hdr *rx,
 	u8_t ticker_id_adv, ticker_id_conn;
 	u8_t peer_addr[BDADDR_SIZE];
 	u32_t ticks_slot_overhead;
-	u32_t mayfly_was_enabled;
 	u32_t ticks_slot_offset;
 	struct pdu_adv *pdu_adv;
 	struct ll_adv_set *adv;
@@ -86,12 +88,13 @@ void ull_slave_setup(memq_link_t *link, struct node_rx_hdr *rx,
 	conn_interval_us = interval * 1250U;
 
 	/* calculate the window widening */
-	lll->slave.sca = pdu_adv->connect_ind.sca;
+	conn->slave.sca = pdu_adv->connect_ind.sca;
 	lll->slave.window_widening_periodic_us =
 		(((lll_conn_ppm_local_get() +
-		   lll_conn_ppm_get(lll->slave.sca)) *
+		   lll_conn_ppm_get(conn->slave.sca)) *
 		  conn_interval_us) + (1000000 - 1)) / 1000000U;
-	lll->slave.window_widening_max_us = (conn_interval_us >> 1) - TIFS_US;
+	lll->slave.window_widening_max_us = (conn_interval_us >> 1) -
+					    EVENT_IFS_US;
 	lll->slave.window_size_event_us = pdu_adv->connect_ind.win_size * 1250U;
 
 	/* procedure timeouts */
@@ -114,28 +117,60 @@ void ull_slave_setup(memq_link_t *link, struct node_rx_hdr *rx,
 			     conn->apto_reload;
 #endif /* CONFIG_BT_CTLR_LE_PING */
 
-	/* FIXME: */
-	#if 0
-	memcpy((void *)&lll->slave.force, &lll->access_addr[0],
-	       sizeof(lll->slave.force));
-	#endif
+	memcpy((void *)&conn->slave.force, &lll->access_addr[0],
+	       sizeof(conn->slave.force));
 
-	chan_sel = pdu_adv->chan_sel;
+#if defined(CONFIG_BT_CTLR_PRIVACY)
+	u8_t own_addr_type = pdu_adv->rx_addr;
+	u8_t own_addr[BDADDR_SIZE];
+	u8_t rl_idx = ftr->rl_idx;
+
+	memcpy(own_addr, &pdu_adv->connect_ind.adv_addr[0], BDADDR_SIZE);
+#endif
+
 	peer_addr_type = pdu_adv->tx_addr;
 	memcpy(peer_addr, pdu_adv->connect_ind.init_addr, BDADDR_SIZE);
+
+	chan_sel = pdu_adv->chan_sel;
 
 	cc = (void *)pdu_adv;
 	cc->status = 0U;
 	cc->role = 1U;
-	cc->peer_addr_type = peer_addr_type;
-	memcpy(cc->peer_addr, peer_addr, BDADDR_SIZE);
+
+#if defined(CONFIG_BT_CTLR_PRIVACY)
+	cc->own_addr_type = own_addr_type;
+	memcpy(&cc->own_addr[0], &own_addr[0], BDADDR_SIZE);
+
+	if (rl_idx != FILTER_IDX_NONE) {
+		/* TODO: store rl_idx instead if safe */
+		/* Store identity address */
+		ll_rl_id_addr_get(rl_idx, &cc->peer_addr_type,
+				  &cc->peer_addr[0]);
+		/* Mark it as identity address from RPA (0x02, 0x03) */
+		cc->peer_addr_type += 2;
+
+		/* Store peer RPA */
+		memcpy(&cc->peer_rpa[0], &peer_addr[0], BDADDR_SIZE);
+	} else {
+		memset(&cc->peer_rpa[0], 0x0, BDADDR_SIZE);
+#else
+	if (1) {
+#endif /* CONFIG_BT_CTLR_PRIVACY */
+		cc->peer_addr_type = peer_addr_type;
+		memcpy(cc->peer_addr, peer_addr, BDADDR_SIZE);
+	}
+
 	cc->interval = lll->interval;
 	cc->latency = lll->latency;
 	cc->timeout = timeout;
-	cc->sca = lll->slave.sca;
+	cc->sca = conn->slave.sca;
 
 	lll->handle = ll_conn_handle_get(conn);
 	rx->handle = lll->handle;
+
+#if defined(CONFIG_BT_CTLR_TX_PWR_DYNAMIC_CONTROL)
+	lll->tx_pwr_lvl = RADIO_TXP_DEFAULT;
+#endif /* CONFIG_BT_CTLR_TX_PWR_DYNAMIC_CONTROL */
 
 	/* Use Channel Selection Algorithm #2 if peer too supports it */
 	if (IS_ENABLED(CONFIG_BT_CTLR_CHAN_SEL_2)) {
@@ -176,91 +211,6 @@ void ull_slave_setup(memq_link_t *link, struct node_rx_hdr *rx,
 
 	ll_rx_put(link, rx);
 	ll_rx_sched();
-#if 0
-		/* Prepare the rx packet structure */
-		node_rx->hdr.handle = conn->handle;
-		node_rx->hdr.type = NODE_RX_TYPE_CONNECTION;
-
-		/* prepare connection complete structure */
-		pdu_data = (void *)node_rx->pdu_data;
-		radio_le_conn_cmplt = (void *)pdu_data->lldata;
-		radio_le_conn_cmplt->status = 0x00;
-		radio_le_conn_cmplt->role = 0x01;
-#if defined(CONFIG_BT_CTLR_PRIVACY)
-		radio_le_conn_cmplt->own_addr_type = pdu_adv->rx_addr;
-		memcpy(&radio_le_conn_cmplt->own_addr[0],
-		       &pdu_adv->connect_ind.adv_addr[0], BDADDR_SIZE);
-		if (rl_idx != FILTER_IDX_NONE) {
-			/* TODO: store rl_idx instead if safe */
-			/* Store identity address */
-			ll_rl_id_addr_get(rl_idx,
-					  &radio_le_conn_cmplt->peer_addr_type,
-					  &radio_le_conn_cmplt->peer_addr[0]);
-			/* Mark it as identity address from RPA (0x02, 0x03) */
-			radio_le_conn_cmplt->peer_addr_type += 2;
-
-			/* Store peer RPA */
-			memcpy(&radio_le_conn_cmplt->peer_rpa[0],
-			       &pdu_adv->connect_ind.init_addr[0],
-			       BDADDR_SIZE);
-		} else {
-			memset(&radio_le_conn_cmplt->peer_rpa[0], 0x0,
-			       BDADDR_SIZE);
-#else
-		if (1) {
-#endif /* CONFIG_BT_CTLR_PRIVACY */
-			radio_le_conn_cmplt->peer_addr_type = pdu_adv->tx_addr;
-			memcpy(&radio_le_conn_cmplt->peer_addr[0],
-			       &pdu_adv->connect_ind.init_addr[0],
-			       BDADDR_SIZE);
-		}
-
-		radio_le_conn_cmplt->interval =
-			pdu_adv->connect_ind.interval;
-		radio_le_conn_cmplt->latency =
-			pdu_adv->connect_ind.latency;
-		radio_le_conn_cmplt->timeout =
-			pdu_adv->connect_ind.timeout;
-		radio_le_conn_cmplt->mca =
-			pdu_adv->connect_ind.sca;
-
-		/* enqueue connection complete structure into queue */
-		rx_fc_lock(conn->handle);
-		packet_rx_enqueue();
-
-		/* Use Channel Selection Algorithm #2 if peer too supports it */
-		if (IS_ENABLED(CONFIG_BT_CTLR_CHAN_SEL_2)) {
-			struct radio_le_chan_sel_algo *le_chan_sel_algo;
-
-			/* Generate LE Channel Selection Algorithm event */
-			node_rx = packet_rx_reserve_get(3);
-			LL_ASSERT(node_rx);
-
-			node_rx->hdr.handle = conn->handle;
-			node_rx->hdr.type = NODE_RX_TYPE_CHAN_SEL_ALGO;
-
-			pdu_data = (void *)node_rx->pdu_data;
-			le_chan_sel_algo = (void *)pdu_data->lldata;
-
-			if (pdu_adv->chan_sel) {
-				u16_t aa_ls =
-					((u16_t)conn->access_addr[1] << 8) |
-					conn->access_addr[0];
-				u16_t aa_ms =
-					((u16_t)conn->access_addr[3] << 8) |
-					 conn->access_addr[2];
-
-				conn->data_chan_sel = 1;
-				conn->data_chan_id = aa_ms ^ aa_ls;
-
-				le_chan_sel_algo->chan_sel_algo = 0x01;
-			} else {
-				le_chan_sel_algo->chan_sel_algo = 0x00;
-			}
-
-			packet_rx_enqueue();
-		}
-#endif
 
 	/* TODO: active_to_start feature port */
 	conn->evt.ticks_active_to_start = 0U;
@@ -270,7 +220,7 @@ void ull_slave_setup(memq_link_t *link, struct node_rx_hdr *rx,
 		HAL_TICKER_US_TO_TICKS(EVENT_OVERHEAD_PREEMPT_MIN_US);
 	conn->evt.ticks_slot =
 		HAL_TICKER_US_TO_TICKS(EVENT_OVERHEAD_START_US +
-				       ftr->us_radio_rdy + 328 + TIFS_US +
+				       ftr->us_radio_rdy + 328 + EVENT_IFS_US +
 				       328);
 
 	ticks_slot_offset = MAX(conn->evt.ticks_active_to_start,
@@ -287,16 +237,14 @@ void ull_slave_setup(memq_link_t *link, struct node_rx_hdr *rx,
 	conn_offset_us = ftr->us_radio_end;
 	conn_offset_us += ((u64_t)win_offset + 1) * 1250U;
 	conn_offset_us -= EVENT_OVERHEAD_START_US;
-	conn_offset_us -= EVENT_JITTER_US << 1;
+	conn_offset_us -= EVENT_TICKER_RES_MARGIN_US;
 	conn_offset_us -= EVENT_JITTER_US;
 	conn_offset_us -= ftr->us_radio_rdy;
 
+#if (CONFIG_BT_CTLR_ULL_HIGH_PRIO == CONFIG_BT_CTLR_ULL_LOW_PRIO)
 	/* disable ticker job, in order to chain stop and start to avoid RTC
 	 * being stopped if no tickers active.
 	 */
-#if (CONFIG_BT_CTLR_ULL_HIGH_PRIO == CONFIG_BT_CTLR_ULL_LOW_PRIO)
-	mayfly_was_enabled = mayfly_is_enabled(TICKER_USER_ID_ULL_HIGH,
-					       TICKER_USER_ID_ULL_LOW);
 	mayfly_enable(TICKER_USER_ID_ULL_HIGH, TICKER_USER_ID_ULL_LOW, 0);
 #endif
 
@@ -326,7 +274,11 @@ void ull_slave_setup(memq_link_t *link, struct node_rx_hdr *rx,
 				     HAL_TICKER_US_TO_TICKS(conn_offset_us),
 				     HAL_TICKER_US_TO_TICKS(conn_interval_us),
 				     HAL_TICKER_REMAINDER(conn_interval_us),
+#if defined(CONFIG_BT_CTLR_CONN_META)
+				     TICKER_LAZY_MUST_EXPIRE,
+#else
 				     TICKER_NULL_LAZY,
+#endif /* CONFIG_BT_CTLR_CONN_META */
 				     (conn->evt.ticks_slot +
 				      ticks_slot_overhead),
 				     ull_slave_ticker_cb, conn, ticker_op_cb,
@@ -335,16 +287,20 @@ void ull_slave_setup(memq_link_t *link, struct node_rx_hdr *rx,
 		  (ticker_status == TICKER_STATUS_BUSY));
 
 #if (CONFIG_BT_CTLR_ULL_HIGH_PRIO == CONFIG_BT_CTLR_ULL_LOW_PRIO)
-	/* enable ticker job, if disabled in this function */
-	if (mayfly_was_enabled) {
-		mayfly_enable(TICKER_USER_ID_ULL_HIGH, TICKER_USER_ID_ULL_LOW,
-			      1);
-	}
-#else
-	ARG_UNUSED(mayfly_was_enabled);
+	/* enable ticker job, irrespective of disabled in this function so
+	 * first connection event can be scheduled as soon as possible.
+	 */
+	mayfly_enable(TICKER_USER_ID_ULL_HIGH, TICKER_USER_ID_ULL_LOW, 1);
 #endif
 }
 
+/**
+ * @brief Extract timing from completed event
+ *
+ * @param node_rx_event_done[in] Done event containing fresh timing information
+ * @param ticks_drift_plus[out]  Positive part of drift uncertainty window
+ * @param ticks_drift_minus[out] Negative part of drift uncertainty window
+ */
 void ull_slave_done(struct node_rx_event_done *done, u32_t *ticks_drift_plus,
 		    u32_t *ticks_drift_minus)
 {
@@ -361,7 +317,7 @@ void ull_slave_done(struct node_rx_event_done *done, u32_t *ticks_drift_plus,
 		done->extra.slave.preamble_to_addr_us;
 
 	start_to_address_expected_us = EVENT_JITTER_US +
-				       (EVENT_JITTER_US << 1) +
+				       EVENT_TICKER_RES_MARGIN_US +
 				       window_widening_event_us +
 				       preamble_to_addr_us;
 
@@ -376,7 +332,7 @@ void ull_slave_done(struct node_rx_event_done *done, u32_t *ticks_drift_plus,
 			HAL_TICKER_US_TO_TICKS(start_to_address_actual_us);
 		*ticks_drift_minus =
 			HAL_TICKER_US_TO_TICKS(EVENT_JITTER_US +
-					       (EVENT_JITTER_US << 1) +
+					       EVENT_TICKER_RES_MARGIN_US +
 					       preamble_to_addr_us);
 	}
 }
@@ -390,14 +346,21 @@ void ull_slave_ticker_cb(u32_t ticks_at_expire, u32_t remainder, u16_t lazy,
 	struct ll_conn *conn = param;
 	u32_t err;
 	u8_t ref;
-	int ret;
 
 	DEBUG_RADIO_PREPARE_S(1);
 
-	/* Handle any LL Control Procedures */
-	ret = ull_conn_llcp(conn, ticks_at_expire, lazy);
-	if (ret) {
-		return;
+	/* If this is a must-expire callback, LLCP state machine does not need
+	 * to know. Will be called with lazy > 0 when scheduled in air.
+	 */
+	if (!IS_ENABLED(CONFIG_BT_CTLR_CONN_META) ||
+	    (lazy != TICKER_LAZY_MUST_EXPIRE)) {
+		int ret;
+
+		/* Handle any LL Control Procedures */
+		ret = ull_conn_llcp(conn, ticks_at_expire, lazy);
+		if (ret) {
+			return;
+		}
 	}
 
 	/* Increment prepare reference count */
@@ -430,7 +393,6 @@ u8_t ll_start_enc_req_send(u16_t handle, u8_t error_code,
 			    u8_t const *const ltk)
 {
 	struct ll_conn *conn;
-	u8_t ret;
 
 	conn = ll_connected_get(handle);
 	if (!conn) {
@@ -438,17 +400,14 @@ u8_t ll_start_enc_req_send(u16_t handle, u8_t error_code,
 	}
 
 	if (error_code) {
-		if (conn->refresh == 0U) {
-			ret = ull_conn_allowed_check(conn);
-			if (ret) {
-				return ret;
+		if (conn->llcp_enc.refresh == 0U) {
+			if ((conn->llcp_req == conn->llcp_ack) ||
+			     (conn->llcp_type != LLCP_ENCRYPTION)) {
+				return BT_HCI_ERR_CMD_DISALLOWED;
 			}
 
 			conn->llcp.encryption.error_code = error_code;
-			conn->llcp.encryption.initiate = 0U;
-
-			conn->llcp_type = LLCP_ENCRYPTION;
-			conn->llcp_req++;
+			conn->llcp.encryption.state = LLCP_ENC_STATE_INPROG;
 		} else {
 			if (conn->llcp_terminate.ack !=
 			    conn->llcp_terminate.req) {
@@ -460,19 +419,16 @@ u8_t ll_start_enc_req_send(u16_t handle, u8_t error_code,
 			conn->llcp_terminate.req++;
 		}
 	} else {
-		memcpy(&conn->llcp.encryption.ltk[0], ltk,
-		       sizeof(conn->llcp.encryption.ltk));
-
-		ret = ull_conn_allowed_check(conn);
-		if (ret) {
-			return ret;
+		if ((conn->llcp_req == conn->llcp_ack) ||
+		     (conn->llcp_type != LLCP_ENCRYPTION)) {
+			return BT_HCI_ERR_CMD_DISALLOWED;
 		}
 
-		conn->llcp.encryption.error_code = 0U;
-		conn->llcp.encryption.initiate = 0U;
+		memcpy(&conn->llcp_enc.ltk[0], ltk,
+		       sizeof(conn->llcp_enc.ltk));
 
-		conn->llcp_type = LLCP_ENCRYPTION;
-		conn->llcp_req++;
+		conn->llcp.encryption.error_code = 0U;
+		conn->llcp.encryption.state = LLCP_ENC_STATE_INPROG;
 	}
 
 	return 0;

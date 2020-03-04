@@ -9,7 +9,7 @@
 
 #include <device.h>
 #include <kernel.h>
-#include <gpio.h>
+#include <drivers/gpio.h>
 
 #define SHT3XD_CMD_FETCH                0xE000
 #define SHT3XD_CMD_ART                  0x2B32
@@ -51,7 +51,8 @@ struct sht3xd_config {
 
 	u8_t base_address;
 #ifdef CONFIG_SHT3XD_TRIGGER
-	s8_t alert_pin;
+	u8_t alert_pin;
+	u8_t alert_flags;
 #endif /* CONFIG_SHT3XD_TRIGGER */
 };
 

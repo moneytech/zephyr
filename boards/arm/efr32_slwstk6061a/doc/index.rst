@@ -10,7 +10,7 @@ The EFR32 Flex Gecko Wireless Starter Kit SLWSTK6061A contains a Wireless
 System-On-Chip from the EFR32FG family built on an ARM® Cortex®-M4F processor
 with excellent low power capabilities.
 
-.. figure:: ./efr32_slwstk6061a.png
+.. figure:: ./efr32_slwstk6061a.jpg
    :width: 375px
    :align: center
    :alt: EFR32-SLWSTK6061A
@@ -60,12 +60,18 @@ The efr32_slwstk6061a board configuration supports the following hardware featur
 +-----------+------------+-------------------------------------+
 | SYSTICK   | on-chip    | systick                             |
 +-----------+------------+-------------------------------------+
+| COUNTER   | on-chip    | rtcc                                |
++-----------+------------+-------------------------------------+
 | FLASH     | on-chip    | flash memory                        |
 +-----------+------------+-------------------------------------+
 | GPIO      | on-chip    | gpio                                |
 +-----------+------------+-------------------------------------+
 | UART      | on-chip    | serial port-polling;                |
 |           |            | serial port-interrupt               |
++-----------+------------+-------------------------------------+
+| SPI(M)    | on-chip    | spi port-polling                    |
++-----------+------------+-------------------------------------+
+| WATCHDOG  | on-chip    | watchdog                            |
 +-----------+------------+-------------------------------------+
 
 The default configuration can be found in the defconfig file:
@@ -101,6 +107,14 @@ means Pin number 2 on PORTA, as used in the board's datasheets and manuals.
 +-------+-------------+-------------------------------------+
 | PA1   | USART0_RX   | UART Console EFM_BC_RX US0_RX #0    |
 +-------+-------------+-------------------------------------+
+| PC6   | SPI_MOSI    | Flash MOSI US1_TX #11               |
++-------+-------------+-------------------------------------+
+| PC7   | SPI_MISO    | Flash MISO US1_RX #11               |
++-------+-------------+-------------------------------------+
+| PC8   | SPI_SCLK    | Flash SCLK US1_CLK #11              |
++-------+-------------+-------------------------------------+
+| PA4   | SPI_CS      | Flash Chip Select (GPIO)            |
++-------+-------------+-------------------------------------+
 
 System Clock
 ============
@@ -121,9 +135,6 @@ Programming and Debugging
    Before using the kit the first time, you should update the J-Link firmware
    from `J-Link-Downloads`_
 
-Flashing
-========
-
 The EFR32-SLWSTK6061A includes an `J-Link`_ serial and debug adaptor built into the
 board. The adaptor provides:
 
@@ -132,27 +143,25 @@ board. The adaptor provides:
 - A physical UART connection which is relayed over interface USB Serial port.
 - An Ethernet connection to support remote debugging.
 
-Flashing an application to EFR32-SLWSTK6061A
---------------------------------------------
+It is compatible with the following host debug tools:
 
-The sample application :ref:`hello_world` is used for this example.
-Build the Zephyr kernel and application:
+- :ref:`openocd-debug-host-tools`
+- :ref:`jlink-debug-host-tools`
+
+OpenOCD is included in the Zephyr SDK. Refer to the links above for information
+on how to install required host debug tools if you are not using the Zephyr SDK.
+
+Flashing
+========
+
+Connect the EFR32-SLWSTK6061A board to your host computer using the USB port.
+
+Here is an example for the :ref:`hello_world` application.
 
 .. zephyr-app-commands::
    :zephyr-app: samples/hello_world
    :board: efr32_slwstk6061a
-   :goals: build
-
-Connect the EFR32-SLWSTK6061A to your host computer using the USB port and you
-should see a USB Serial Port. Use `J-Link`_ or Silicon Labs Simplicity Studio
-to flash the generated zephyr.bin. On a Linux host with Zephyr SDK installed you
-can run:
-
-.. code-block:: console
-
-   ninja flash
-
-The command is using `OpenOCD`_ runner.
+   :goals: flash
 
 Open a serial terminal (minicom, putty, etc.) with the following settings:
 
@@ -161,12 +170,11 @@ Open a serial terminal (minicom, putty, etc.) with the following settings:
 - Parity: None
 - Stop bits: 1
 
-Reset the board and you should be able to see on the corresponding Serial Port
-the following message:
+Reset the board and you should see the following message in the terminal:
 
 .. code-block:: console
 
-   Hello World! arm
+   Hello World! efr32_slwstk6061a
 
 
 .. _EFR32-SLWSTK6061A Website:
@@ -195,6 +203,3 @@ the following message:
 
 .. _J-Link-Downloads:
    https://www.segger.com/downloads/jlink
-
-.. _OpenOCD:
-   http://openocd.org/

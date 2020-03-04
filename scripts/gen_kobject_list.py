@@ -19,6 +19,8 @@ validate accesses to kernel objects to make the following assertions:
 
     - The calling thread has sufficient permissions on the object
 
+For more details see the :ref:`kernelobjects` section in the documentation.
+
 The zephyr build generates an intermediate ELF binary, zephyr_prebuilt.elf,
 which this script scans looking for kernel objects by examining the DWARF
 debug information to look for instances of data structures that are considered
@@ -26,7 +28,7 @@ kernel objects. For device drivers, the API struct pointer populated at build
 time is also examined to disambiguate between various device driver instances
 since they are all 'struct device'.
 
-The result of this script is five generated files:
+This script can generate five different output files:
 
     - A gperf script to generate the hash table mapping kernel object memory
       addresses to kernel object metadata, used to track permissions,
@@ -35,17 +37,18 @@ The result of this script is five generated files:
     - A header file containing generated macros for validating driver instances
       inside the system call handlers for the driver subsystem APIs.
 
-    - A header file defining enumerated types for all the different kernel
-      object types.
+    - A code fragment included by kernel.h with one enum constant for
+      each kernel object type and each driver instance.
 
-    - A C code fragment, included by kernel/userspace.c, for printing
-      human-readable representations of kernel object types in the
+    - The inner cases of a switch/case C statement, included by
+      kernel/userspace.c, mapping the kernel object types and driver
+      instances to their human-readable representation in the
       otype_to_str() function.
 
-    - A C code fragment, included by kernel/userspace.c, for mapping
-      kernel object types to the sizes of those kernel objects, used for
-      allocating instances of them at runtime (CONFIG_DYNAMIC_OBJECTS)
-      in the obj_size_get() function.
+    - The inner cases of a switch/case C statement, included by
+      kernel/userspace.c, mapping kernel object types to their sizes.
+      This is used for allocating instances of them at runtime
+      (CONFIG_DYNAMIC_OBJECTS) in the obj_size_get() function.
 """
 
 import sys
@@ -70,7 +73,7 @@ from collections import OrderedDict
 # Regular dictionaries are ordered only with Python 3.6 and
 # above. Good summary and pointers to official documents at:
 # https://stackoverflow.com/questions/39980323/are-dictionaries-ordered-in-python-3-6
-kobjects = OrderedDict ([
+kobjects = OrderedDict([
     ("k_mem_slab", (None, False)),
     ("k_msgq", (None, False)),
     ("k_mutex", (None, False)),
@@ -83,7 +86,8 @@ kobjects = OrderedDict ([
     ("k_timer", (None, False)),
     ("_k_thread_stack_element", (None, False)),
     ("device", (None, False)),
-    ("sys_mutex", (None, True))
+    ("sys_mutex", (None, True)),
+    ("k_futex", (None, True))
 ])
 
 
@@ -103,13 +107,17 @@ subsystems = [
     "pinmux_driver_api",
     "pwm_driver_api",
     "entropy_driver_api",
-    "rtc_driver_api",
     "sensor_driver_api",
     "spi_driver_api",
     "uart_driver_api",
     "can_driver_api",
-]
+    "ptp_clock_driver_api",
+    "eeprom_driver_api",
+    "wdt_driver_api",
 
+    # Fake 'sample driver' subsystem, used by tests/samples
+    "sample_driver_api"
+]
 
 header = """%compare-lengths
 %define lookup-function-name z_object_lookup
@@ -159,11 +167,20 @@ void z_object_wordlist_foreach(_wordlist_cb_func_t func, void *context)
 def write_gperf_table(fp, eh, objs, static_begin, static_end):
     fp.write(header)
     num_mutexes = eh.get_sys_mutex_counter()
-    if (num_mutexes != 0):
+    if num_mutexes != 0:
         fp.write("static struct k_mutex kernel_mutexes[%d] = {\n" % num_mutexes)
         for i in range(num_mutexes):
             fp.write("_K_MUTEX_INITIALIZER(kernel_mutexes[%d])" % i)
-            if (i != num_mutexes - 1):
+            if i != num_mutexes - 1:
+                fp.write(", ")
+        fp.write("};\n")
+
+    num_futex = eh.get_futex_counter()
+    if num_futex != 0:
+        fp.write("static struct z_futex_data futex_data[%d] = {\n" % num_futex)
+        for i in range(num_futex):
+            fp.write("Z_FUTEX_DATA_INITIALIZER(futex_data[%d])" % i)
+            if i != num_futex - 1:
                 fp.write(", ")
         fp.write("};\n")
 
@@ -181,19 +198,32 @@ def write_gperf_table(fp, eh, objs, static_begin, static_end):
         # pre-initialized objects fall within this memory range, they are
         # either completely initialized at build time, or done automatically
         # at boot during some PRE_KERNEL_* phase
-        initialized = obj_addr >= static_begin and obj_addr < static_end
+        initialized = static_begin <= obj_addr < static_end
+        is_driver = obj_type.startswith("K_OBJ_DRIVER_")
 
-        byte_str = struct.pack("<I" if eh.little_endian else ">I", obj_addr)
+        if "CONFIG_64BIT" in syms:
+            format_code = "Q"
+        else:
+            format_code = "I"
+
+        if eh.little_endian:
+            endian = "<"
+        else:
+            endian = ">"
+
+        byte_str = struct.pack(endian + format_code, obj_addr)
         fp.write("\"")
         for byte in byte_str:
             val = "\\x%02x" % byte
             fp.write(val)
 
-        fp.write(
-            "\",{},%s,%s,%s\n" %
-            (obj_type,
-             "K_OBJ_FLAG_INITIALIZED" if initialized else "0",
-             str(ko.data)))
+        flags = "0"
+        if initialized:
+            flags += " | K_OBJ_FLAG_INITIALIZED"
+        if is_driver:
+            flags += " | K_OBJ_FLAG_DRIVER"
+
+        fp.write("\", {}, %s, %s, %s\n" % (obj_type, flags, str(ko.data)))
 
         if obj_type == "K_OBJ_THREAD":
             idx = math.floor(ko.data / 8)
@@ -204,6 +234,7 @@ def write_gperf_table(fp, eh, objs, static_begin, static_end):
 
     # Generate the array of already mapped thread indexes
     fp.write('\n')
+    fp.write('Z_GENERIC_SECTION(.kobject_data.data) ')
     fp.write('u8_t _thread_idx_map[%d] = {' % (thread_max_bytes))
 
     for i in range(0, thread_max_bytes):
@@ -288,7 +319,7 @@ def write_kobj_size_output(fp):
         dep, _ = obj_info
         # device handled by default case. Stacks are not currently handled,
         # if they eventually are it will be a special case.
-        if kobj == "device" or kobj == "_k_thread_stack_element":
+        if kobj in {"device", "_k_thread_stack_element"}:
             continue
 
         if dep:
@@ -317,7 +348,7 @@ def parse_args():
         help="Output driver validation macros")
     parser.add_argument(
         "-K", "--kobj-types-output", required=False,
-        help="Output k_object enum values")
+        help="Output k_object enum constants")
     parser.add_argument(
         "-S", "--kobj-otype-output", required=False,
         help="Output case statements for otype_to_str()")
@@ -346,10 +377,9 @@ def main():
 
         thread_counter = eh.get_thread_counter()
         if thread_counter > max_threads:
-            sys.stderr.write("Too many thread objects (%d)\n" % thread_counter)
-            sys.stderr.write("Increase CONFIG_MAX_THREAD_BYTES to %d\n" %
-                             -(-thread_counter // 8))
-            sys.exit(1)
+            sys.exit("Too many thread objects ({})\n"
+                     "Increase CONFIG_MAX_THREAD_BYTES to {}"
+                     .format(thread_counter, -(-thread_counter // 8)))
 
         with open(args.gperf_output, "w") as fp:
             write_gperf_table(fp, eh, objs,

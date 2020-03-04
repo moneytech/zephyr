@@ -5,7 +5,7 @@
  */
 
 #include <zephyr.h>
-#include <ipm.h>
+#include <drivers/ipm.h>
 #include <drivers/console/ipm_console.h>
 #include <device.h>
 #include <init.h>
@@ -106,5 +106,3 @@ void main(void)
 	TC_END_RESULT(rv);
 	TC_END_REPORT(rv);
 }
-
-

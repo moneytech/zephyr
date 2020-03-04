@@ -1,9 +1,7 @@
-# Kconfig - FRDM-K64F board
-#
+# FRDM-K64F board
+
 # Copyright (c) 2016, Freescale Semiconductor, Inc.
-#
 # SPDX-License-Identifier: Apache-2.0
-#
 
 if BOARD_FRDM_K64F
 
@@ -70,42 +68,38 @@ config GPIO_MCUX_PORTE
 
 endif # GPIO_MCUX
 
-if I2C
-
 config I2C_0
 	default y
-
-endif # I2C
-
-if ADC
+	depends on I2C
 
 config ADC_1
 	default y
+	depends on ADC
 
-endif # ADC
-
-if PWM_MCUX_FTM
+config TEMP_KINETIS
+	default y
+	depends on SENSOR
 
 config PWM_3
 	default y
-
-endif # PWM_MCUX_FTM
-
-if SPI
+	depends on PWM_MCUX_FTM
 
 config SPI_0
 	default y
-
-endif # SPI
+	depends on SPI
 
 if NETWORKING
 
 config NET_L2_ETHERNET
-	default y if !MODEM_WNCM14A2A
+	default y if !MODEM
 
 config ETH_MCUX_0
 	default y if NET_L2_ETHERNET
 
 endif # NETWORKING
+
+config CAN_0
+	default y
+	depends on CAN
 
 endif # BOARD_FRDM_K64F

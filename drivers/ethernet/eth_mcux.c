@@ -20,7 +20,7 @@
 LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 
 #include <device.h>
-#include <misc/util.h>
+#include <sys/util.h>
 #include <kernel.h>
 #include <net/net_pkt.h>
 #include <net/net_if.h>
@@ -34,6 +34,10 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 
 #include "fsl_enet.h"
 #include "fsl_phy.h"
+
+#define FREESCALE_OUI_B0 0x00
+#define FREESCALE_OUI_B1 0x04
+#define FREESCALE_OUI_B2 0x9f
 
 enum eth_mcux_phy_state {
 	eth_mcux_phy_state_initial,
@@ -216,7 +220,11 @@ static void eth_mcux_phy_start(struct eth_context *context)
 		ENET_StartSMIWrite(ENET, phy_addr, PHY_BASICCONTROL_REG,
 			   kENET_MiiWriteValidFrame,
 			   PHY_BCTL_RESET_MASK);
+#ifdef CONFIG_SOC_SERIES_IMX_RT
 		context->phy_state = eth_mcux_phy_state_initial;
+#else
+		context->phy_state = eth_mcux_phy_state_reset;
+#endif
 		break;
 	case eth_mcux_phy_state_reset:
 		eth_mcux_phy_enter_reset(context);
@@ -326,8 +334,12 @@ static void eth_mcux_phy_event(struct eth_context *context)
 					  kENET_MiiReadValidFrame);
 			context->link_up = link_up;
 			context->phy_state = eth_mcux_phy_state_read_duplex;
-			net_eth_carrier_on(context->iface);
-			k_sleep(USEC_PER_MSEC);
+
+			/* Network interface might be NULL at this point */
+			if (context->iface) {
+				net_eth_carrier_on(context->iface);
+				k_sleep(USEC_PER_MSEC);
+			}
 		} else if (!link_up && context->link_up) {
 			LOG_INF("Link down");
 			context->link_up = link_up;
@@ -746,10 +758,11 @@ static void generate_mac(u8_t *mac_addr)
 
 	entropy = sys_rand32_get();
 
+	mac_addr[0] |= 0x02; /* force LAA bit */
+
 	mac_addr[3] = entropy >> 8;
 	mac_addr[4] = entropy >> 16;
-	/* Locally administered, unicast */
-	mac_addr[5] = ((entropy >> 0) & 0xfc) | 0x02;
+	mac_addr[5] = entropy >> 0;
 }
 #elif defined(CONFIG_ETH_MCUX_0_UNIQUE_MAC)
 static void generate_mac(u8_t *mac_addr)
@@ -762,10 +775,11 @@ static void generate_mac(u8_t *mac_addr)
 	u32_t id = SIM->UIDH ^ SIM->UIDMH ^ SIM->UIDML ^ SIM->UIDL;
 #endif
 
+	mac_addr[0] |= 0x02; /* force LAA bit */
+
 	mac_addr[3] = id >> 8;
 	mac_addr[4] = id >> 16;
-	/* Locally administered, unicast */
-	mac_addr[5] = ((id >> 0) & 0xfc) | 0x02;
+	mac_addr[5] = id >> 0;
 }
 #endif
 
@@ -787,6 +801,10 @@ static int eth_0_init(struct device *dev)
 #if defined(CONFIG_PTP_CLOCK_MCUX)
 	u8_t ptp_multicast[6] = { 0x01, 0x80, 0xC2, 0x00, 0x00, 0x0E };
 #endif
+#if defined(CONFIG_MDNS_RESPONDER) || defined(CONFIG_MDNS_RESOLVER)
+	/* standard multicast MAC address */
+	u8_t mdns_multicast[6] = { 0x01, 0x00, 0x5E, 0x00, 0x00, 0xFB };
+#endif
 
 #if defined(CONFIG_PTP_CLOCK_MCUX)
 	ts_tx_rd = 0;
@@ -800,8 +818,6 @@ static int eth_0_init(struct device *dev)
 	k_delayed_work_init(&context->delayed_phy_work,
 			    eth_mcux_delayed_phy_work);
 
-	eth_mcux_phy_setup();
-
 	sys_clock = CLOCK_GetFreq(kCLOCK_CoreSysClk);
 
 	ENET_GetDefaultConfig(&enet_config);
@@ -813,6 +829,12 @@ static int eth_0_init(struct device *dev)
 	enet_config.macSpecialConfig |= kENET_ControlPromiscuousEnable;
 #endif
 
+	/* Initialize/override OUI which may not be correct in
+	 * devicetree.
+	 */
+	context->mac_addr[0] = FREESCALE_OUI_B0;
+	context->mac_addr[1] = FREESCALE_OUI_B1;
+	context->mac_addr[2] = FREESCALE_OUI_B2;
 #if defined(CONFIG_ETH_MCUX_0_UNIQUE_MAC) || \
     defined(CONFIG_ETH_MCUX_0_RANDOM_MAC)
 	generate_mac(context->mac_addr);
@@ -820,6 +842,13 @@ static int eth_0_init(struct device *dev)
 
 #if defined(CONFIG_NET_VLAN)
 	enet_config.macSpecialConfig |= kENET_ControlVLANTagEnable;
+#endif
+
+#if defined(CONFIG_ETH_MCUX_HW_ACCELERATION)
+	enet_config.txAccelerConfig |=
+		kENET_TxAccelIpCheckEnabled | kENET_TxAccelProtoCheckEnabled;
+	enet_config.rxAccelerConfig |=
+		kENET_RxAccelIpCheckEnabled | kENET_RxAccelProtoCheckEnabled;
 #endif
 
 	ENET_Init(ENET,
@@ -844,8 +873,14 @@ static int eth_0_init(struct device *dev)
 	ENET_Ptp1588Configure(ENET, &context->enet_handle,
 			      &context->ptp_config);
 #endif
+#if defined(CONFIG_MDNS_RESPONDER) || defined(CONFIG_MDNS_RESOLVER)
+	ENET_AddMulticastGroup(ENET, mdns_multicast);
+#endif
 
 	ENET_SetSMI(ENET, sys_clock, false);
+
+	/* handle PHY setup after SMI initialization */
+	eth_mcux_phy_setup();
 
 	LOG_DBG("MAC %02x:%02x:%02x:%02x:%02x:%02x",
 		context->mac_addr[0], context->mac_addr[1],
@@ -853,7 +888,6 @@ static int eth_0_init(struct device *dev)
 		context->mac_addr[4], context->mac_addr[5]);
 
 	ENET_SetCallback(&context->enet_handle, eth_callback, dev);
-	eth_0_config_func();
 
 	eth_mcux_phy_start(context);
 
@@ -892,10 +926,18 @@ static void eth_iface_init(struct net_if *iface)
 			     sizeof(context->mac_addr),
 			     NET_LINK_ETHERNET);
 
-	/* For VLAN, this value is only used to get the correct L2 driver */
-	context->iface = iface;
+	/* For VLAN, this value is only used to get the correct L2 driver.
+	 * The iface pointer in context should contain the main interface
+	 * if the VLANs are enabled.
+	 */
+	if (context->iface == NULL) {
+		context->iface = iface;
+	}
 
 	ethernet_init(iface);
+	net_if_flag_set(iface, NET_IF_NO_AUTO_START);
+
+	eth_0_config_func();
 }
 
 static enum ethernet_hw_caps eth_mcux_get_capabilities(struct device *dev)
@@ -906,6 +948,11 @@ static enum ethernet_hw_caps eth_mcux_get_capabilities(struct device *dev)
 #if defined(CONFIG_PTP_CLOCK_MCUX)
 		ETHERNET_PTP |
 #endif
+#if defined(CONFIG_ETH_MCUX_HW_ACCELERATION)
+		ETHERNET_HW_TX_CHKSUM_OFFLOAD |
+		ETHERNET_HW_RX_CHKSUM_OFFLOAD |
+#endif
+		ETHERNET_AUTO_NEGOTIATION_SET |
 		ETHERNET_LINK_100BASE_T;
 }
 
@@ -997,17 +1044,9 @@ static void eth_mcux_error_isr(void *p)
 static struct eth_context eth_0_context = {
 	.phy_duplex = kPHY_FullDuplex,
 	.phy_speed = kPHY_Speed100M,
-	.mac_addr = {
-		/* Freescale's OUI */
-		0x00,
-		0x04,
-		0x9f,
 #if defined(CONFIG_ETH_MCUX_0_MANUAL_MAC)
-		DT_ETH_MCUX_0_MAC3,
-		DT_ETH_MCUX_0_MAC4,
-		DT_ETH_MCUX_0_MAC5
+	.mac_addr = DT_ETH_MCUX_0_MAC,
 #endif
-	}
 };
 
 ETH_NET_DEVICE_INIT(eth_mcux_0, DT_ETH_MCUX_0_NAME, eth_0_init,

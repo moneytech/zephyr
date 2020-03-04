@@ -8,9 +8,9 @@
 
 LOG_MODULE_REGISTER(pwm_sifive, CONFIG_PWM_LOG_LEVEL);
 
-#include <sys_io.h>
+#include <sys/sys_io.h>
 #include <device.h>
-#include <pwm.h>
+#include <drivers/pwm.h>
 
 /* Macros */
 
@@ -96,7 +96,8 @@ static int pwm_sifive_init(struct device *dev)
 static int pwm_sifive_pin_set(struct device *dev,
 			      u32_t pwm,
 			      u32_t period_cycles,
-			      u32_t pulse_cycles)
+			      u32_t pulse_cycles,
+			      pwm_flags_t flags)
 {
 	const struct pwm_sifive_cfg *config = NULL;
 	u32_t count_max = 0U;
@@ -110,6 +111,11 @@ static int pwm_sifive_pin_set(struct device *dev,
 	if (dev->config == NULL) {
 		LOG_ERR("The device config pointer was NULL\n");
 		return -EFAULT;
+	}
+
+	if (flags) {
+		/* PWM polarity not supported (yet?) */
+		return -ENOTSUP;
 	}
 
 	config = dev->config->config_info;
@@ -225,12 +231,12 @@ static const struct pwm_driver_api pwm_sifive_api = {
 #define PWM_SIFIVE_INIT(n)	\
 	static struct pwm_sifive_data pwm_sifive_data_##n;	\
 	static const struct pwm_sifive_cfg pwm_sifive_cfg_##n = {	\
-			.base = DT_SIFIVE_PWM0_##n##_BASE_ADDRESS,	\
-			.f_sys = DT_SIFIVE_PWM0_##n##_CLOCK_FREQUENCY,  \
-			.cmpwidth = DT_SIFIVE_PWM0_##n##_SIFIVE_COMPARE_WIDTH, \
+			.base = DT_INST_##n##_SIFIVE_PWM0_BASE_ADDRESS,	\
+			.f_sys = DT_INST_##n##_SIFIVE_PWM0_CLOCK_FREQUENCY,  \
+			.cmpwidth = DT_INST_##n##_SIFIVE_PWM0_SIFIVE_COMPARE_WIDTH, \
 		};	\
 	DEVICE_AND_API_INIT(pwm_##n,	\
-			    DT_SIFIVE_PWM0_##n##_LABEL,	\
+			    DT_INST_##n##_SIFIVE_PWM0_LABEL,	\
 			    pwm_sifive_init,	\
 			    &pwm_sifive_data_##n,	\
 			    &pwm_sifive_cfg_##n,	\
@@ -238,15 +244,14 @@ static const struct pwm_driver_api pwm_sifive_api = {
 			    CONFIG_PWM_SIFIVE_INIT_PRIORITY,	\
 			    &pwm_sifive_api)
 
-#ifdef DT_SIFIVE_PWM0_0_LABEL
+#ifdef DT_INST_0_SIFIVE_PWM0_LABEL
 PWM_SIFIVE_INIT(0);
-#endif /* DT_SIFIVE_PWM0_0_LABEL */
+#endif /* DT_INST_0_SIFIVE_PWM0_LABEL */
 
-#ifdef DT_SIFIVE_PWM0_1_LABEL
+#ifdef DT_INST_1_SIFIVE_PWM0_LABEL
 PWM_SIFIVE_INIT(1);
-#endif /* DT_SIFIVE_PWM0_1_LABEL */
+#endif /* DT_INST_1_SIFIVE_PWM0_LABEL */
 
-#ifdef DT_SIFIVE_PWM0_2_LABEL
+#ifdef DT_INST_2_SIFIVE_PWM0_LABEL
 PWM_SIFIVE_INIT(2);
-#endif /* DT_SIFIVE_PWM0_2_LABEL */
-
+#endif /* DT_INST_2_SIFIVE_PWM0_LABEL */

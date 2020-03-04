@@ -1,10 +1,7 @@
-# Kconfig - IEEE 802.15.4 driver configuration options
+# IEEE 802.15.4 driver configuration options
 
-#
 # Copyright (c) 2015 Intel Corporation
-#
 # SPDX-License-Identifier: Apache-2.0
-#
 
 #
 # IEEE 802.15.4 options
@@ -34,15 +31,20 @@ source "drivers/ieee802154/Kconfig.nrf5"
 
 source "drivers/ieee802154/Kconfig.cc1200"
 
+source "drivers/ieee802154/Kconfig.cc13xx_cc26xx"
+
+source "drivers/ieee802154/Kconfig.rf2xx"
+
 menuconfig IEEE802154_UPIPE
 	bool "UART PIPE fake radio driver support for QEMU"
 	depends on (BOARD_QEMU_X86 || BOARD_QEMU_CORTEX_M3) && NETWORKING
 	select UART_PIPE
 
+if IEEE802154_UPIPE
+
 config IEEE802154_UPIPE_DRV_NAME
 	string "UART PIPE Driver name"
 	default "IEEE802154_UPIPE"
-	depends on IEEE802154_UPIPE
 
 config IEEE802154_UPIPE_HW_FILTER
 	bool "Hw Filtering"
@@ -87,6 +89,8 @@ config IEEE802154_UPIPE_MAC7
 	  This is the byte 7 of the MAC address.
 
 endif # IEEE802154_UPIPE_RANDOM_MAC
+
+endif # IEEE802154_UPIPE
 
 module = IEEE802154_DRIVER
 module-str = IEEE 802.15.4 driver

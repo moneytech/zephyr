@@ -7,11 +7,11 @@
 #include <string.h>
 
 #include <zephyr.h>
-#include <misc/printk.h>
+#include <sys/printk.h>
 #include <logging/log.h>
 #include <shell/shell.h>
 #include <shell/shell_uart.h>
-#include <flash.h>
+#include <drivers/flash.h>
 #include <device.h>
 #include <soc.h>
 #include <stdlib.h>
@@ -612,4 +612,3 @@ SHELL_STATIC_SUBCMD_SET_CREATE(sub_flash,
 );
 
 SHELL_CMD_REGISTER(flash, &sub_flash, "Flash realated commands.", cmd_flash);
-

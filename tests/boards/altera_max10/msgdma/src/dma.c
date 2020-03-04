@@ -6,9 +6,9 @@
 
 #include <ztest.h>
 #include <soc.h>
-#include <kernel_structs.h>
+#include <kernel_arch_func.h>
 #include <device.h>
-#include <dma.h>
+#include <drivers/dma.h>
 
 #define DMA_BUFF_SIZE		1024
 

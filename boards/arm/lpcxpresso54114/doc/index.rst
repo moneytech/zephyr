@@ -7,11 +7,11 @@ Overview
 ********
 
 The LPCXpresso54114 board has been developed by NXP to enable evaluation of and
-prototyping with the LPC54110 family of MCUs and with the low-power LPC54110
-family of MCUs. LPCXpresso* is a low-cost development platform available from
-NXP supporting NXP's ARM-based microcontrollers. LPCXpresso is an end-to-end
-solution enabling embedded engineers to develop their applications from initial
-evaluation to final production.
+prototyping with the low-power LPC54110 family of MCUs. LPCXpresso* is a
+low-cost development platform available from NXP supporting NXP's ARM-based
+microcontrollers. LPCXpresso is an end-to-end solution enabling embedded
+engineers to develop their applications from initial evaluation to final
+production.
 
 .. image:: ./lpcxpresso54114_m4.png
    :width: 720px
@@ -62,6 +62,8 @@ features:
 +-----------+------------+-------------------------------------+
 | GPIO      | on-chip    | gpio                                |
 +-----------+------------+-------------------------------------+
+| SPI       | on-chip    | spi                                 |
++-----------+------------+-------------------------------------+
 | USART     | on-chip    | serial port-polling                 |
 +-----------+------------+-------------------------------------+
 
@@ -85,7 +87,15 @@ functionality of a pin.
 +---------+-----------------+----------------------------+
 | PIO0_1  | USART           | USART TX                   |
 +---------+-----------------+----------------------------+
+| PIO0_18 | SPI             | SPI MISO                   |
++---------+-----------------+----------------------------+
+| PIO0_19 | SPI             | SPI SCK                    |
++---------+-----------------+----------------------------+
+| PIO0_20 | SPI             | SPI MOSI                   |
++---------+-----------------+----------------------------+
 | PIO0_29 | GPIO            | RED LED                    |
++---------+-----------------+----------------------------+
+| PIO1_1  | SPI             | SPI SSEL2                  |
 +---------+-----------------+----------------------------+
 | PIO1_9  | GPIO            | BLUE_LED                   |
 +---------+-----------------+----------------------------+

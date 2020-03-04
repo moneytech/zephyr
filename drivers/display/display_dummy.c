@@ -6,7 +6,7 @@
 
 #include <string.h>
 
-#include <display.h>
+#include <drivers/display.h>
 
 struct dummy_display_data {
 	enum display_pixel_format current_pixel_format;
@@ -111,4 +111,3 @@ DEVICE_AND_API_INIT(dummy_display, CONFIG_DUMMY_DISPLAY_DEV_NAME,
 		    &dummy_display_init, &dummy_display_data, NULL,
 		    APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY,
 		    &dummy_display_api);
-

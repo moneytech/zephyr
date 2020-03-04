@@ -11,8 +11,8 @@
 
 #include <string.h>
 #include <stdio.h>
-#include <misc/byteorder.h>
-#include <usb/usb_dc.h>
+#include <sys/byteorder.h>
+#include <drivers/usb/usb_dc.h>
 #include <usb/usb_device.h>
 #include <net/net_ip.h>
 
@@ -29,8 +29,8 @@ LOG_MODULE_REGISTER(native_posix);
 /* convert from hardware endpoint index and direction to endpoint address */
 #define USBIP_EP_IDX2ADDR(idx, dir)    ((idx) | ((dir) & USB_EP_DIR_MASK))
 
-#define USBIP_IN_EP_NUM		4
-#define USBIP_OUT_EP_NUM	4
+#define USBIP_IN_EP_NUM		8
+#define USBIP_OUT_EP_NUM	8
 
 #define USBIP_MAX_PACKET_SIZE	64
 
@@ -196,7 +196,8 @@ int usb_dc_ep_configure(const struct usb_dc_ep_cfg_data * const cfg)
 		return -EINVAL;
 	}
 
-	if (!usbip_ctrl.attached && !usbip_ep_is_valid(ep)) {
+	if (!usbip_ctrl.attached || !usbip_ep_is_valid(ep)) {
+		LOG_ERR("Not attached / Invalid endpoint: EP 0x%x", ep);
 		return -EINVAL;
 	}
 
@@ -213,7 +214,8 @@ int usb_dc_ep_set_stall(const u8_t ep)
 {
 	LOG_DBG("ep %x", ep);
 
-	if (!usbip_ctrl.attached && !usbip_ep_is_valid(ep)) {
+	if (!usbip_ctrl.attached || !usbip_ep_is_valid(ep)) {
+		LOG_ERR("Not attached / Invalid endpoint: EP 0x%x", ep);
 		return -EINVAL;
 	}
 
@@ -229,7 +231,8 @@ int usb_dc_ep_clear_stall(const u8_t ep)
 
 	LOG_DBG("ep %x", ep);
 
-	if (!usbip_ctrl.attached && !usbip_ep_is_valid(ep)) {
+	if (!usbip_ctrl.attached || !usbip_ep_is_valid(ep)) {
+		LOG_ERR("Not attached / Invalid endpoint: EP 0x%x", ep);
 		return -EINVAL;
 	}
 
@@ -247,7 +250,8 @@ int usb_dc_ep_halt(const u8_t ep)
 
 	LOG_DBG("ep %x", ep);
 
-	if (!usbip_ctrl.attached && !usbip_ep_is_valid(ep)) {
+	if (!usbip_ctrl.attached || !usbip_ep_is_valid(ep)) {
+		LOG_ERR("Not attached / Invalid endpoint: EP 0x%x", ep);
 		return -EINVAL;
 	}
 
@@ -263,7 +267,8 @@ int usb_dc_ep_is_stalled(const u8_t ep, u8_t *const stalled)
 {
 	LOG_DBG("ep %x", ep);
 
-	if (!usbip_ctrl.attached && !usbip_ep_is_valid(ep)) {
+	if (!usbip_ctrl.attached || !usbip_ep_is_valid(ep)) {
+		LOG_ERR("Not attached / Invalid endpoint: EP 0x%x", ep);
 		return -EINVAL;
 	}
 
@@ -280,7 +285,8 @@ int usb_dc_ep_enable(const u8_t ep)
 
 	LOG_DBG("ep %x", ep);
 
-	if (!usbip_ctrl.attached && !usbip_ep_is_valid(ep)) {
+	if (!usbip_ctrl.attached || !usbip_ep_is_valid(ep)) {
+		LOG_ERR("Not attached / Invalid endpoint: EP 0x%x", ep);
 		return -EINVAL;
 	}
 
@@ -298,6 +304,11 @@ int usb_dc_ep_disable(const u8_t ep)
 {
 	LOG_DBG("ep %x", ep);
 
+	if (!usbip_ctrl.attached || !usbip_ep_is_valid(ep)) {
+		LOG_ERR("Not attached / Invalid endpoint: EP 0x%x", ep);
+		return -EINVAL;
+	}
+
 	return 0;
 }
 
@@ -305,7 +316,8 @@ int usb_dc_ep_flush(const u8_t ep)
 {
 	LOG_DBG("ep %x", ep);
 
-	if (!usbip_ctrl.attached && !usbip_ep_is_valid(ep)) {
+	if (!usbip_ctrl.attached || !usbip_ep_is_valid(ep)) {
+		LOG_ERR("Not attached / Invalid endpoint: EP 0x%x", ep);
 		return -EINVAL;
 	}
 
@@ -322,7 +334,8 @@ int usb_dc_ep_write(const u8_t ep, const u8_t *const data,
 {
 	LOG_DBG("ep %x len %u", ep, data_len);
 
-	if (!usbip_ctrl.attached && !usbip_ep_is_valid(ep)) {
+	if (!usbip_ctrl.attached || !usbip_ep_is_valid(ep)) {
+		LOG_ERR("Not attached / Invalid endpoint: EP 0x%x", ep);
 		return -EINVAL;
 	}
 
@@ -338,8 +351,13 @@ int usb_dc_ep_write(const u8_t ep, const u8_t *const data,
 	}
 
 	if (USBIP_EP_ADDR2IDX(ep) == 0) {
-		usbip_send_common(ep, data_len);
-		usbip_send(ep, data, data_len);
+		if (!usbip_send_common(ep, data_len)) {
+			return -EIO;
+		}
+
+		if (usbip_send(ep, data, data_len) != data_len) {
+			return -EIO;
+		}
 	} else {
 		u8_t ep_idx = USBIP_EP_ADDR2IDX(ep);
 		struct usb_ep_ctrl_prv *ctrl = &usbip_ctrl.in_ep_ctrl[ep_idx];
@@ -360,8 +378,8 @@ int usb_dc_ep_read_wait(u8_t ep, u8_t *data, u32_t max_data_len,
 {
 	u32_t bytes;
 
-	if (!usbip_ctrl.attached && !usbip_ep_is_valid(ep)) {
-		LOG_ERR("No valid endpoint");
+	if (!usbip_ctrl.attached || !usbip_ep_is_valid(ep)) {
+		LOG_ERR("Not attached / Invalid endpoint: EP 0x%x", ep);
 		return -EINVAL;
 	}
 
@@ -383,6 +401,19 @@ int usb_dc_ep_read_wait(u8_t ep, u8_t *data, u32_t max_data_len,
 		return -EINVAL;
 	}
 
+	if (!data && !max_data_len) {
+		/* When both buffer and max data to read are zero return
+		 * the available data in buffer
+		 */
+		if (read_bytes) {
+			u8_t ep_idx = USBIP_EP_ADDR2IDX(ep);
+
+			*read_bytes = usbip_ctrl.out_ep_ctrl[ep_idx].data_len;
+		}
+
+		return 0;
+	}
+
 	LOG_DBG("ep %x max_data_len %u", ep, max_data_len);
 
 	bytes = usbip_recv(data, max_data_len);
@@ -398,8 +429,8 @@ int usb_dc_ep_read_continue(u8_t ep)
 {
 	u8_t ep_idx = USBIP_EP_ADDR2IDX(ep);
 
-	if (!usbip_ctrl.attached && !usbip_ep_is_valid(ep)) {
-		LOG_ERR("No valid endpoint");
+	if (!usbip_ctrl.attached || !usbip_ep_is_valid(ep)) {
+		LOG_ERR("Not attached / Invalid endpoint: EP 0x%x", ep);
 		return -EINVAL;
 	}
 
@@ -446,7 +477,8 @@ int usb_dc_ep_set_callback(const u8_t ep, const usb_dc_ep_callback cb)
 
 	LOG_DBG("ep %x callback %p", ep, cb);
 
-	if (!usbip_ctrl.attached && !usbip_ep_is_valid(ep)) {
+	if (!usbip_ctrl.attached || !usbip_ep_is_valid(ep)) {
+		LOG_ERR("Not attached / Invalid endpoint: EP 0x%x", ep);
 		return -EINVAL;
 	}
 
@@ -459,11 +491,9 @@ int usb_dc_ep_set_callback(const u8_t ep, const usb_dc_ep_callback cb)
 	return 0;
 }
 
-int usb_dc_set_status_callback(const usb_dc_status_callback cb)
+void usb_dc_set_status_callback(const usb_dc_status_callback cb)
 {
 	usbip_ctrl.status_cb = cb;
-
-	return 0;
 }
 
 int usb_dc_ep_mps(const u8_t ep)
@@ -472,7 +502,8 @@ int usb_dc_ep_mps(const u8_t ep)
 
 	LOG_DBG("ep %x", ep);
 
-	if (!usbip_ep_is_valid(ep)) {
+	if (!usbip_ctrl.attached || !usbip_ep_is_valid(ep)) {
+		LOG_ERR("Not attached / Invalid endpoint: EP 0x%x", ep);
 		return -EINVAL;
 	}
 
@@ -493,25 +524,19 @@ int handle_usb_control(struct usbip_header *hdr)
 	if (ep_cb) {
 		LOG_DBG("Call ep_cb");
 		ep_cb(ntohl(hdr->common.ep), USB_DC_EP_SETUP);
+		if (ntohl(hdr->common.command) == USBIP_CMD_SUBMIT &&
+		    hdr->u.submit.transfer_buffer_length != 0) {
+			ep_cb(ntohl(hdr->common.ep), USB_DC_EP_DATA_OUT);
+		}
 	}
 
 	return 0;
-}
-
-static void usbip_skip_setup(void)
-{
-	u64_t setup;
-
-	LOG_DBG("Skip 8 bytes");
-
-	usbip_recv((void *)&setup, sizeof(setup));
 }
 
 int handle_usb_data(struct usbip_header *hdr)
 {
 	u8_t ep_idx = ntohl(hdr->common.ep);
 	usb_dc_ep_callback ep_cb;
-	int bytes;
 	u8_t ep;
 
 	LOG_DBG("ep_idx %u", ep_idx);
@@ -527,8 +552,13 @@ int handle_usb_data(struct usbip_header *hdr)
 		ep_cb(ep, USB_DC_EP_DATA_OUT);
 
 		/* Send ACK reply */
-		bytes = usbip_send_common(ep, 0);
+		if (!usbip_send_common(ep, 0)) {
+			return -EIO;
+		}
 	} else {
+		u8_t buf_len = usbip_ctrl.in_ep_ctrl[ep_idx].buf_len;
+		u8_t *buf = usbip_ctrl.in_ep_ctrl[ep_idx].buf;
+
 		if (ep_idx >= USBIP_IN_EP_NUM) {
 			return -EINVAL;
 		}
@@ -536,17 +566,23 @@ int handle_usb_data(struct usbip_header *hdr)
 		ep = ep_idx | USB_EP_DIR_IN;
 		ep_cb = usbip_ctrl.in_ep_ctrl[ep_idx].cb;
 
-		usbip_skip_setup();
+		/* Read USB setup, not handled */
+		if (!usbip_skip_setup()) {
+			return -EIO;
+		}
 
-		LOG_DBG("Send %u bytes", usbip_ctrl.in_ep_ctrl[ep_idx].buf_len);
+		LOG_DBG("Send %u bytes", buf_len);
 
 		/* Send queued data */
-		usbip_send_common(ep, usbip_ctrl.in_ep_ctrl[ep_idx].buf_len);
-		usbip_send(ep, usbip_ctrl.in_ep_ctrl[ep_idx].buf,
-			   usbip_ctrl.in_ep_ctrl[ep_idx].buf_len);
+		if (!usbip_send_common(ep, buf_len)) {
+			return -EIO;
+		}
 
-		LOG_HEXDUMP_DBG(usbip_ctrl.in_ep_ctrl[ep_idx].buf,
-				usbip_ctrl.in_ep_ctrl[ep_idx].buf_len, ">");
+		if (usbip_send(ep, buf, buf_len) != buf_len) {
+			return -EIO;
+		}
+
+		LOG_HEXDUMP_DBG(buf, buf_len, ">");
 
 		/* Indicate data sent */
 		ep_cb(ep, USB_DC_EP_DATA_IN);

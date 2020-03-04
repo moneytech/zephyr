@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018 Intel Corporation.
+ * Copyright (c) 2018-2019 Intel Corporation.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -9,11 +9,26 @@
 #include <logging/log.h>
 LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 
+#include <sys/types.h>
 #include <zephyr.h>
 #include <net/ethernet.h>
 #include <ethernet/eth_stats.h>
-#include <pci/pci.h>
+#include <drivers/pcie/pcie.h>
 #include "eth_e1000_priv.h"
+
+#if defined(CONFIG_ETH_E1000_VERBOSE_DEBUG)
+#define hexdump(_buf, _len, fmt, args...)				\
+({									\
+	const size_t STR_SIZE = 80;					\
+	char _str[STR_SIZE];						\
+									\
+	snprintk(_str, STR_SIZE, "%s: " fmt, __func__, ## args);	\
+									\
+	LOG_HEXDUMP_DBG(_buf, _len, log_strdup(_str));			\
+})
+#else
+#define hexdump(args...)
+#endif
 
 static const char *e1000_reg_to_string(enum e1000_reg_t r)
 {
@@ -50,10 +65,12 @@ static enum ethernet_hw_caps e1000_caps(struct device *dev)
 		ETHERNET_LINK_1000BASE_T;
 }
 
-static int e1000_tx(struct e1000_dev *dev, void *data, size_t data_len)
+static int e1000_tx(struct e1000_dev *dev, void *buf, size_t len)
 {
-	dev->tx.addr = POINTER_TO_INT(data);
-	dev->tx.len = data_len;
+	hexdump(buf, len, "%zu byte(s)", len);
+
+	dev->tx.addr = POINTER_TO_INT(buf);
+	dev->tx.len = len;
 	dev->tx.cmd = TDESC_EOP | TDESC_RS;
 
 	iow32(dev, TDT, 1);
@@ -82,6 +99,8 @@ static int e1000_send(struct device *device, struct net_pkt *pkt)
 static struct net_pkt *e1000_rx(struct e1000_dev *dev)
 {
 	struct net_pkt *pkt = NULL;
+	void *buf;
+	ssize_t len;
 
 	LOG_DBG("rx.sta: 0x%02hx", dev->rx.sta);
 
@@ -90,15 +109,24 @@ static struct net_pkt *e1000_rx(struct e1000_dev *dev)
 		goto out;
 	}
 
-	pkt = net_pkt_rx_alloc_with_buffer(dev->iface, dev->rx.len - 4,
-					   AF_UNSPEC, 0, K_NO_WAIT);
+	buf = INT_TO_POINTER((u32_t)dev->rx.addr);
+	len = dev->rx.len - 4;
+
+	if (len <= 0) {
+		LOG_ERR("Invalid RX descriptor length: %hu", dev->rx.len);
+		goto out;
+	}
+
+	hexdump(buf, len, "%zd byte(s)", len);
+
+	pkt = net_pkt_rx_alloc_with_buffer(dev->iface, len, AF_UNSPEC, 0,
+					   K_NO_WAIT);
 	if (!pkt) {
 		LOG_ERR("Out of buffers");
 		goto out;
 	}
 
-	if (net_pkt_write(pkt, INT_TO_POINTER((u32_t) dev->rx.addr),
-			  dev->rx.len - 4)) {
+	if (net_pkt_write(pkt, buf, len)) {
 		LOG_ERR("Out of memory for received frame");
 		net_pkt_unref(pkt);
 		pkt = NULL;
@@ -132,24 +160,24 @@ static void e1000_isr(struct device *device)
 	}
 }
 
+#define PCI_VENDOR_ID_INTEL	0x8086
+#define PCI_DEVICE_ID_I82540EM	0x100e
+
 int e1000_probe(struct device *device)
 {
+	const pcie_bdf_t bdf = PCIE_BDF(0, 3, 0);
 	struct e1000_dev *dev = device->driver_data;
+	int retval = -ENODEV;
 
-	pci_bus_scan_init();
-
-	if (pci_bus_scan(&dev->pci)) {
-
-		pci_enable_regs(&dev->pci);
-
-		pci_enable_bus_master(&dev->pci);
-
-		pci_show(&dev->pci);
-
-		return 0;
+	if (pcie_probe(bdf, PCIE_ID(PCI_VENDOR_ID_INTEL,
+			    PCI_DEVICE_ID_I82540EM))) {
+		dev->address = pcie_get_mbar(bdf, 0);
+		pcie_set_cmd(bdf, PCIE_CONF_CMDSTAT_MEM |
+				  PCIE_CONF_CMDSTAT_MASTER, true);
+		retval = 0;
 	}
 
-	return -ENODEV;
+	return retval;
 }
 
 static struct device DEVICE_NAME_GET(eth_e1000);
@@ -210,13 +238,7 @@ static void e1000_init(struct net_if *iface)
 	LOG_DBG("done");
 }
 
-#define PCI_VENDOR_ID_INTEL	0x8086
-#define PCI_DEVICE_ID_I82540EM	0x100e
-
-static struct e1000_dev e1000_dev = {
-	.pci.vendor_id = PCI_VENDOR_ID_INTEL,
-	.pci.device_id = PCI_DEVICE_ID_I82540EM,
-};
+static struct e1000_dev e1000_dev;
 
 static const struct ethernet_api e1000_api = {
 	.iface_api.init		= e1000_init,

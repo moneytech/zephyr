@@ -18,10 +18,10 @@
 #include "timer_model.h"
 #include "irq_ctrl.h"
 #include "posix_board_if.h"
-#include "posix_soc_if.h"
+#include <arch/posix/posix_soc_if.h>
 #include "posix_arch_internal.h"
 #include "sdl_events.h"
-#include <misc/util.h>
+#include <sys/util.h>
 
 
 static u64_t simu_time; /* The actual time as known by the HW models */
@@ -102,8 +102,8 @@ static void hwm_sleep_until_next_timer(void)
 		/* LCOV_EXCL_START */
 		posix_print_warning("next_timer_time corrupted (%"PRIu64"<= %"
 				PRIu64", timer idx=%i)\n",
-				next_timer_time,
-				simu_time,
+				(uint64_t)next_timer_time,
+				(uint64_t)simu_time,
 				next_timer_index);
 		/* LCOV_EXCL_STOP */
 	}
@@ -209,5 +209,3 @@ void hwm_cleanup(void)
 	hwtimer_cleanup();
 	hw_irq_ctrl_cleanup();
 }
-
-

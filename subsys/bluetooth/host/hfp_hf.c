@@ -7,10 +7,10 @@
  */
 #include <zephyr.h>
 #include <errno.h>
-#include <atomic.h>
-#include <misc/byteorder.h>
-#include <misc/util.h>
-#include <misc/printk.h>
+#include <sys/atomic.h>
+#include <sys/byteorder.h>
+#include <sys/util.h>
+#include <sys/printk.h>
 
 #include <bluetooth/conn.h>
 
@@ -32,9 +32,8 @@
 
 struct bt_hfp_hf_cb *bt_hf;
 
-NET_BUF_POOL_DEFINE(hf_pool, CONFIG_BT_MAX_CONN + 1,
-		    BT_RFCOMM_BUF_SIZE(BT_HF_CLIENT_MAX_PDU),
-		    BT_BUF_USER_DATA_MIN, NULL);
+NET_BUF_POOL_FIXED_DEFINE(hf_pool, CONFIG_BT_MAX_CONN + 1,
+			  BT_RFCOMM_BUF_SIZE(BT_HF_CLIENT_MAX_PDU), NULL);
 
 static struct bt_hfp_hf bt_hfp_hf_pool[CONFIG_BT_MAX_CONN];
 

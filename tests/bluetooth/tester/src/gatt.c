@@ -16,8 +16,8 @@
 #include <bluetooth/conn.h>
 #include <bluetooth/gatt.h>
 #include <bluetooth/uuid.h>
-#include <misc/byteorder.h>
-#include <misc/printk.h>
+#include <sys/byteorder.h>
+#include <sys/printk.h>
 #include <net/buf.h>
 
 #include <logging/log.h>
@@ -206,6 +206,7 @@ static void supported_commands(u8_t *data, u16_t len)
 	tester_set_bit(cmds, GATT_CFG_INDICATE);
 	tester_set_bit(cmds, GATT_GET_ATTRIBUTES);
 	tester_set_bit(cmds, GATT_GET_ATTRIBUTE_VALUE);
+	tester_set_bit(cmds, GATT_DISC_ALL_PRIM);
 
 	tester_send(BTP_SERVICE_ID_GATT, GATT_READ_SUPPORTED_COMMANDS,
 		    CONTROLLER_INDEX, (u8_t *) rp, sizeof(cmds));
@@ -213,11 +214,19 @@ static void supported_commands(u8_t *data, u16_t len)
 
 static int register_service(void)
 {
+	int err;
+
 	server_svcs[svc_count].attrs = server_db +
 				       (attr_count - svc_attr_count);
 	server_svcs[svc_count].attr_count = svc_attr_count;
 
-	return bt_gatt_service_register(&server_svcs[svc_count]);
+	err = bt_gatt_service_register(&server_svcs[svc_count]);
+	if (!err) {
+		/* Service registered, reset the counter */
+		svc_attr_count = 0U;
+	}
+
+	return err;
 }
 
 static void add_service(u8_t *data, u16_t len)
@@ -236,14 +245,13 @@ static void add_service(u8_t *data, u16_t len)
 							sizeof(uuid.u128);
 
 	/* Register last defined service */
-	if (svc_count) {
+	if (svc_attr_count) {
 		if (register_service()) {
 			goto fail;
 		}
 	}
 
 	svc_count++;
-	svc_attr_count = 0U;
 
 	switch (cmd->type) {
 	case GATT_SERVICE_PRIMARY:
@@ -441,7 +449,7 @@ static void add_characteristic(u8_t *data, u16_t len)
 		goto fail;
 	}
 
-	/* characterisic must be added only sequential */
+	/* characteristic must be added only sequential */
 	if (cmd->svc_id) {
 		goto fail;
 	}
@@ -462,7 +470,6 @@ fail:
 
 static bool ccc_added;
 
-static struct bt_gatt_ccc_cfg ccc_cfg[BT_GATT_CCC_MAX] = {};
 static u8_t ccc_value;
 
 static void ccc_cfg_changed(const struct bt_gatt_attr *attr, u16_t value)
@@ -470,7 +477,9 @@ static void ccc_cfg_changed(const struct bt_gatt_attr *attr, u16_t value)
 	ccc_value = value;
 }
 
-static struct bt_gatt_attr ccc = BT_GATT_CCC(ccc_cfg, ccc_cfg_changed);
+static struct bt_gatt_attr ccc = BT_GATT_CCC(ccc_cfg_changed,
+					     BT_GATT_PERM_READ |
+					     BT_GATT_PERM_WRITE);
 
 static struct bt_gatt_attr *add_ccc(const struct bt_gatt_attr *attr)
 {
@@ -807,7 +816,7 @@ static void start_server(u8_t *data, u16_t len)
 	struct gatt_start_server_rp rp;
 
 	/* Register last defined service */
-	if (svc_count) {
+	if (svc_attr_count) {
 		if (register_service()) {
 			tester_rsp(BTP_SERVICE_ID_GATT, GATT_START_SERVER,
 				   CONTROLLER_INDEX, BTP_STATUS_FAILED);
@@ -919,17 +928,17 @@ static void discover_destroy(struct bt_gatt_discover_params *params)
 	gatt_buf_clear();
 }
 
-static u8_t disc_prim_uuid_cb(struct bt_conn *conn,
-				 const struct bt_gatt_attr *attr,
-				 struct bt_gatt_discover_params *params)
+static u8_t disc_prim_cb(struct bt_conn *conn,
+			 const struct bt_gatt_attr *attr,
+			 struct bt_gatt_discover_params *params)
 {
 	struct bt_gatt_service_val *data;
-	struct gatt_disc_prim_uuid_rp *rp = (void *) gatt_buf.buf;
+	struct gatt_disc_prim_rp *rp = (void *) gatt_buf.buf;
 	struct gatt_service *service;
 	u8_t uuid_length;
 
 	if (!attr) {
-		tester_send(BTP_SERVICE_ID_GATT, GATT_DISC_PRIM_UUID,
+		tester_send(BTP_SERVICE_ID_GATT, btp_opcode,
 			    CONTROLLER_INDEX, gatt_buf.buf, gatt_buf.len);
 		discover_destroy(params);
 		return BT_GATT_ITER_STOP;
@@ -941,7 +950,7 @@ static u8_t disc_prim_uuid_cb(struct bt_conn *conn,
 
 	service = gatt_buf_reserve(sizeof(*service) + uuid_length);
 	if (!service) {
-		tester_rsp(BTP_SERVICE_ID_GATT, GATT_DISC_PRIM_UUID,
+		tester_rsp(BTP_SERVICE_ID_GATT, btp_opcode,
 			   CONTROLLER_INDEX, BTP_STATUS_FAILED);
 		discover_destroy(params);
 		return BT_GATT_ITER_STOP;
@@ -965,6 +974,44 @@ static u8_t disc_prim_uuid_cb(struct bt_conn *conn,
 	return BT_GATT_ITER_CONTINUE;
 }
 
+static void disc_all_prim(u8_t *data, u16_t len)
+{
+	struct bt_conn *conn;
+
+	conn = bt_conn_lookup_addr_le(BT_ID_DEFAULT, (bt_addr_le_t *)data);
+	if (!conn) {
+		goto fail_conn;
+	}
+
+	if (!gatt_buf_reserve(sizeof(struct gatt_disc_prim_rp))) {
+		goto fail;
+	}
+
+	discover_params.uuid = NULL;
+	discover_params.start_handle = 0x0001;
+	discover_params.end_handle = 0xffff;
+	discover_params.type = BT_GATT_DISCOVER_PRIMARY;
+	discover_params.func = disc_prim_cb;
+
+	btp_opcode = GATT_DISC_ALL_PRIM;
+
+	if (bt_gatt_discover(conn, &discover_params) < 0) {
+		discover_destroy(&discover_params);
+
+		goto fail;
+	}
+
+	bt_conn_unref(conn);
+
+	return;
+fail:
+	bt_conn_unref(conn);
+
+fail_conn:
+	tester_rsp(BTP_SERVICE_ID_GATT, GATT_DISC_ALL_PRIM, CONTROLLER_INDEX,
+		   BTP_STATUS_FAILED);
+}
+
 static void disc_prim_uuid(u8_t *data, u16_t len)
 {
 	const struct gatt_disc_prim_uuid_cmd *cmd = (void *) data;
@@ -979,7 +1026,7 @@ static void disc_prim_uuid(u8_t *data, u16_t len)
 		goto fail;
 	}
 
-	if (!gatt_buf_reserve(sizeof(struct gatt_disc_prim_uuid_rp))) {
+	if (!gatt_buf_reserve(sizeof(struct gatt_disc_prim_rp))) {
 		goto fail;
 	}
 
@@ -987,7 +1034,9 @@ static void disc_prim_uuid(u8_t *data, u16_t len)
 	discover_params.start_handle = 0x0001;
 	discover_params.end_handle = 0xffff;
 	discover_params.type = BT_GATT_DISCOVER_PRIMARY;
-	discover_params.func = disc_prim_uuid_cb;
+	discover_params.func = disc_prim_cb;
+
+	btp_opcode = GATT_DISC_PRIM_UUID;
 
 	if (bt_gatt_discover(conn, &discover_params) < 0) {
 		discover_destroy(&discover_params);
@@ -1374,6 +1423,49 @@ fail_conn:
 		   BTP_STATUS_FAILED);
 }
 
+static void read_uuid(u8_t *data, u16_t len)
+{
+	const struct gatt_read_uuid_cmd *cmd = (void *) data;
+	struct bt_conn *conn;
+
+	conn = bt_conn_lookup_addr_le(BT_ID_DEFAULT, (bt_addr_le_t *)data);
+	if (!conn) {
+		goto fail_conn;
+	}
+
+	if (btp2bt_uuid(cmd->uuid, cmd->uuid_length, &uuid.uuid)) {
+		goto fail;
+	}
+
+	if (!gatt_buf_reserve(sizeof(struct gatt_read_rp))) {
+		goto fail;
+	}
+
+	read_params.by_uuid.uuid = &uuid.uuid;
+	read_params.handle_count = 0;
+	read_params.by_uuid.start_handle = sys_le16_to_cpu(cmd->start_handle);
+	read_params.by_uuid.end_handle = sys_le16_to_cpu(cmd->end_handle);
+	read_params.func = read_cb;
+
+	btp_opcode = GATT_READ_UUID;
+
+	if (bt_gatt_read(conn, &read_params) < 0) {
+		read_destroy(&read_params);
+
+		goto fail;
+	}
+
+	bt_conn_unref(conn);
+
+	return;
+fail:
+	bt_conn_unref(conn);
+
+fail_conn:
+	tester_rsp(BTP_SERVICE_ID_GATT, GATT_READ_UUID, CONTROLLER_INDEX,
+		   BTP_STATUS_FAILED);
+}
+
 static void read_long(u8_t *data, u16_t len)
 {
 	const struct gatt_read_long_cmd *cmd = (void *) data;
@@ -1565,14 +1657,14 @@ static u8_t notify_func(struct bt_conn *conn,
 			   const void *data, u16_t length)
 {
 	struct gatt_notification_ev *ev = (void *) ev_buf;
-	const bt_addr_le_t *addr = bt_conn_get_dst(conn);
+	const bt_addr_le_t *addr;
 
-	if (!data) {
+	if (!conn || !data) {
 		LOG_DBG("Unsubscribed");
 		(void)memset(params, 0, sizeof(*params));
 		return BT_GATT_ITER_STOP;
 	}
-
+	addr = bt_conn_get_dst(conn);
 	ev->type = (u8_t) subscribe_params.value;
 	ev->handle = sys_cpu_to_le16(subscribe_params.value_handle);
 	ev->data_length = sys_cpu_to_le16(length);
@@ -1765,12 +1857,15 @@ static void get_attrs(u8_t *data, u16_t len)
 	end_handle = sys_le16_to_cpu(cmd->end_handle);
 
 	if (cmd->type_length) {
+		char uuid_str[BT_UUID_STR_LEN];
+
 		if (btp2bt_uuid(cmd->type, cmd->type_length, &uuid.uuid)) {
 			goto fail;
 		}
 
+		bt_uuid_to_str(&uuid.uuid, uuid_str, sizeof(uuid_str));
 		LOG_DBG("start 0x%04x end 0x%04x, uuid %s", start_handle,
-			end_handle, bt_uuid_str(&uuid.uuid));
+			end_handle, log_strdup(uuid_str));
 
 		foreach.uuid = &uuid.uuid;
 	} else {
@@ -1890,6 +1985,9 @@ void tester_handle_gatt(u8_t opcode, u8_t index, u8_t *data,
 	case GATT_EXCHANGE_MTU:
 		exchange_mtu(data, len);
 		return;
+	case GATT_DISC_ALL_PRIM:
+		disc_all_prim(data, len);
+		return;
 	case GATT_DISC_PRIM_UUID:
 		disc_prim_uuid(data, len);
 		return;
@@ -1907,6 +2005,9 @@ void tester_handle_gatt(u8_t opcode, u8_t index, u8_t *data,
 		return;
 	case GATT_READ:
 		read(data, len);
+		return;
+	case GATT_READ_UUID:
+		read_uuid(data, len);
 		return;
 	case GATT_READ_LONG:
 		read_long(data, len);

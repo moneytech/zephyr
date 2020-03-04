@@ -109,36 +109,28 @@ static void protocol_cb(u8_t protocol)
 
 static const struct hid_ops ops = {
 	.int_in_ready = in_ready_cb,
-	.status_cb = status_cb,
 	.on_idle = idle_cb,
 	.protocol_change = protocol_cb,
 };
 
 void main(void)
 {
+	int ret;
+
 	LOG_DBG("Starting application");
 
-	k_delayed_work_init(&delayed_report_send, send_report);
-
-#ifndef CONFIG_USB_COMPOSITE_DEVICE
-	hdev = device_get_binding(CONFIG_USB_HID_DEVICE_NAME_0);
-	if (hdev == NULL) {
-		LOG_ERR("Cannot get USB HID Device");
+	ret = usb_enable(status_cb);
+	if (ret != 0) {
+		LOG_ERR("Failed to enable USB");
 		return;
 	}
 
-	LOG_DBG("HID Device: dev %p", hdev);
-
-	usb_hid_register_device(hdev, hid_report_desc, sizeof(hid_report_desc),
-				&ops);
-	usb_hid_init(hdev);
-#endif
+	k_delayed_work_init(&delayed_report_send, send_report);
 }
 
-#ifdef CONFIG_USB_COMPOSITE_DEVICE
 static int composite_pre_init(struct device *dev)
 {
-	hdev = device_get_binding(CONFIG_USB_HID_DEVICE_NAME_0);
+	hdev = device_get_binding("HID_0");
 	if (hdev == NULL) {
 		LOG_ERR("Cannot get USB HID Device");
 		return -ENODEV;
@@ -153,4 +145,3 @@ static int composite_pre_init(struct device *dev)
 }
 
 SYS_INIT(composite_pre_init, APPLICATION, CONFIG_KERNEL_INIT_PRIORITY_DEVICE);
-#endif

@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <counter.h>
+#include <drivers/counter.h>
 #include <device.h>
 #include "clock_freq.h"
 #include "epit.h"
@@ -86,19 +86,17 @@ static int imx_epit_stop(struct device *dev)
 	return 0;
 }
 
-static u32_t imx_epit_read(struct device *dev)
+static int imx_epit_get_value(struct device *dev, u32_t *ticks)
 {
 	EPIT_Type *base = get_epit_config(dev)->base;
-	u32_t value;
 
-	value = EPIT_GetCounterLoadValue(base) - EPIT_ReadCounter(base);
+	*ticks = EPIT_GetCounterLoadValue(base) - EPIT_ReadCounter(base);
 
-	return value;
+	return 0;
 }
 
-static int imx_epit_set_top_value(struct device *dev, u32_t ticks,
-				  counter_top_callback_t callback,
-				  void *user_data)
+static int imx_epit_set_top_value(struct device *dev,
+				  const struct counter_top_cfg *cfg)
 {
 	EPIT_Type *base = get_epit_config(dev)->base;
 	struct imx_epit_data *driver_data = dev->driver_data;
@@ -106,14 +104,15 @@ static int imx_epit_set_top_value(struct device *dev, u32_t ticks,
 	/* Disable EPIT Output Compare interrupt for consistency */
 	EPIT_SetIntCmd(base, false);
 
-	driver_data->callback = callback;
-	driver_data->user_data = user_data;
+	driver_data->callback = cfg->callback;
+	driver_data->user_data = cfg->user_data;
 
-	/* Set both reload and counter values to "ticks" */
-	EPIT_SetOverwriteCounter(base, true);
-	EPIT_SetCounterLoadValue(base, ticks);
+	/* Set reload value and optionally counter to "ticks" */
+	EPIT_SetOverwriteCounter(base,
+				!(cfg->flags & COUNTER_TOP_CFG_DONT_RESET));
+	EPIT_SetCounterLoadValue(base, cfg->ticks);
 
-	if (callback != NULL) {
+	if (cfg->callback != NULL) {
 		/* (Re)enable EPIT Output Compare interrupt */
 		EPIT_SetIntCmd(base, true);
 	}
@@ -143,7 +142,7 @@ static u32_t imx_epit_get_max_relative_alarm(struct device *dev)
 static const struct counter_driver_api imx_epit_driver_api = {
 	.start = imx_epit_start,
 	.stop = imx_epit_stop,
-	.read = imx_epit_read,
+	.get_value = imx_epit_get_value,
 	.set_top_value = imx_epit_set_top_value,
 	.get_pending_int = imx_epit_get_pending_int,
 	.get_top_value = imx_epit_get_top_value,
@@ -156,7 +155,7 @@ static const struct imx_epit_config imx_epit_##idx##z_config = {		       \
 	.info = {							       \
 			.max_top_value = COUNTER_MAX_RELOAD,		       \
 			.freq = 1U,					       \
-			.count_up = false,				       \
+			.flags = 0,					       \
 			.channels = 0U,					       \
 		},							       \
 	.base = (EPIT_Type *)DT_COUNTER_IMX_EPIT_##idx##_BASE_ADDRESS,	       \

@@ -14,12 +14,14 @@
 LOG_MODULE_REGISTER(net_trickle, CONFIG_NET_TRICKLE_LOG_LEVEL);
 
 #include <errno.h>
-#include <misc/util.h>
+#include <sys/util.h>
 
 #include <net/net_core.h>
 #include <net/trickle.h>
 
 #define TICK_MAX ~0
+
+static void trickle_timeout(struct k_work *work);
 
 static inline bool is_suppression_disabled(struct net_trickle *trickle)
 {
@@ -77,7 +79,7 @@ static void double_interval_timeout(struct k_work *work)
 	NET_DBG("doubling time %u", rand_time);
 
 	trickle->Istart = k_uptime_get_32() + rand_time;
-
+	k_delayed_work_init(&trickle->timer, trickle_timeout);
 	k_delayed_work_submit(&trickle->timer, rand_time);
 
 	NET_DBG("last end %u new end %u for %u I %u",

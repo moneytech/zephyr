@@ -2,12 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # A script to generate a list of boards that have changed or added and create an
-# arguemnts file for sanitycheck to allow running more tests for those boards.
+# arguments file for sanitycheck to allow running more tests for those boards.
 
 import re, os
 import sh
 import logging
 import argparse
+import glob
 
 if "ZEPHYR_BASE" not in os.environ:
     logging.error("$ZEPHYR_BASE environment variable undefined.\n")
@@ -50,12 +51,15 @@ def parse_args():
 
 def main():
     boards = set()
+    all_boards = set()
 
     args = parse_args()
     if not args.commits:
         exit(1)
 
-    commit = sh.git("diff","--name-only", args.commits, **sh_special_args)
+    # pylint does not like the 'sh' library
+    # pylint: disable=too-many-function-args,unexpected-keyword-arg
+    commit = sh.git("diff", "--name-only", args.commits, **sh_special_args)
     files = commit.split("\n")
 
     for f in files:
@@ -65,8 +69,15 @@ def main():
         if p and p.groups():
             boards.add(p.group(1))
 
-    if boards:
-        print("-p\n%s" %("\n-p\n".join(boards)))
+    for b in boards:
+        suboards = glob.glob("boards/*/%s/*.yaml" %(b))
+        for subboard in suboards:
+            name = os.path.splitext(os.path.basename(subboard))[0]
+            if name:
+                all_boards.add(name)
+
+    if all_boards:
+        print("-p\n%s" %("\n-p\n".join(all_boards)))
 
 
 

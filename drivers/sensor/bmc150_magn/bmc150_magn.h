@@ -10,8 +10,8 @@
 #define ZEPHYR_DRIVERS_SENSOR_BMC150_MAGN_BMC150_MAGN_H_
 
 #include <zephyr/types.h>
-#include <i2c.h>
-#include <misc/util.h>
+#include <drivers/i2c.h>
+#include <sys/util.h>
 
 #define BMC150_MAGN_REG_CHIP_ID		0x40
 #define BMC150_MAGN_CHIP_ID_VAL		0x32
@@ -73,7 +73,7 @@
 #define BMC150_MAGN_MASK_DRDY_LATCHING          BIT(1)
 #define BMC150_MAGN_MASK_DRDY_INT3_POLARITY     BIT(0)
 
-#define BMC150_MAGN_I2C_ADDR			CONFIG_BMC150_MAGN_I2C_ADDR
+#define BMC150_MAGN_I2C_ADDR			DT_INST_0_BOSCH_BMC150_MAGN_BASE_ADDRESS
 
 #if defined(CONFIG_BMC150_MAGN_SAMPLING_REP_XY) || \
 	defined(CONFIG_BMC150_MAGN_SAMPLING_REP_Z)
@@ -86,13 +86,13 @@
 #endif
 
 struct bmc150_magn_config {
-	char *i2c_master_dev_name;
-	u16_t i2c_slave_addr;
-
 #if defined(CONFIG_BMC150_MAGN_TRIGGER_DRDY)
 	char *gpio_drdy_dev_name;
-	u8_t gpio_drdy_int_pin;
+	gpio_pin_t gpio_drdy_int_pin;
+	gpio_dt_flags_t gpio_drdy_int_flags;
 #endif
+	u16_t i2c_slave_addr;
+	char *i2c_master_dev_name;
 };
 
 struct bmc150_magn_trim_regs {

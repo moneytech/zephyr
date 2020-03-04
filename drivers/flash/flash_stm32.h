@@ -8,30 +8,24 @@
 #ifndef ZEPHYR_DRIVERS_FLASH_FLASH_STM32_H_
 #define ZEPHYR_DRIVERS_FLASH_FLASH_STM32_H_
 
-#include <flash_registers.h>
-
 #if defined(CONFIG_SOC_SERIES_STM32L4X) || \
 	defined(CONFIG_SOC_SERIES_STM32F0X) || \
-	defined(CONFIG_SOC_SERIES_STM32F3X)
-#include <clock_control.h>
-#include <clock_control/stm32_clock_control.h>
+	defined(CONFIG_SOC_SERIES_STM32F1X) || \
+	defined(CONFIG_SOC_SERIES_STM32F3X) || \
+	defined(CONFIG_SOC_SERIES_STM32G0X) || \
+	defined(CONFIG_SOC_SERIES_STM32G4X)
+#include <drivers/clock_control.h>
+#include <drivers/clock_control/stm32_clock_control.h>
 #endif
 
 struct flash_stm32_priv {
-#if defined(CONFIG_SOC_SERIES_STM32F0X)
-	struct stm32f0x_flash *regs;
-	/* clock subsystem driving this peripheral */
-	struct stm32_pclken pclken;
-#elif defined(CONFIG_SOC_SERIES_STM32F3X)
-	struct stm32f3x_flash *regs;
-	/* clock subsystem driving this peripheral */
-	struct stm32_pclken pclken;
-#elif defined(CONFIG_SOC_SERIES_STM32F4X)
-	struct stm32f4x_flash *regs;
-#elif defined(CONFIG_SOC_SERIES_STM32F7X)
-	struct stm32f7x_flash *regs;
-#elif defined(CONFIG_SOC_SERIES_STM32L4X)
-	struct stm32l4x_flash *regs;
+	FLASH_TypeDef *regs;
+#if defined(CONFIG_SOC_SERIES_STM32L4X) || \
+	defined(CONFIG_SOC_SERIES_STM32F0X) || \
+	defined(CONFIG_SOC_SERIES_STM32F1X) || \
+	defined(CONFIG_SOC_SERIES_STM32F3X) || \
+	defined(CONFIG_SOC_SERIES_STM32G0X) || \
+	defined(CONFIG_SOC_SERIES_STM32G4X)
 	/* clock subsystem driving this peripheral */
 	struct stm32_pclken pclken;
 #endif
@@ -63,6 +57,10 @@ int flash_stm32_block_erase_loop(struct device *dev, unsigned int offset,
 				 unsigned int len);
 
 int flash_stm32_wait_flash_idle(struct device *dev);
+
+#ifdef CONFIG_SOC_SERIES_STM32WBX
+int flash_stm32_check_status(struct device *dev);
+#endif /* CONFIG_SOC_SERIES_STM32WBX */
 
 #ifdef CONFIG_FLASH_PAGE_LAYOUT
 void flash_stm32_page_layout(struct device *dev,

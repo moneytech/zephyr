@@ -5,7 +5,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#define LL_VERSION_NUMBER BT_HCI_VERSION_5_0
+#define LL_VERSION_NUMBER BT_HCI_VERSION_5_1
 
 int ll_init(struct k_sem *sem_rx);
 void ll_reset(void);
@@ -66,7 +66,7 @@ u8_t ll_priv_mode_set(bt_addr_le_t *id_addr, u8_t mode);
 
 u8_t ll_create_connection(u16_t scan_interval, u16_t scan_window,
 			  u8_t filter_policy, u8_t peer_addr_type,
-			  u8_t *p_peer_addr, u8_t own_addr_type,
+			  u8_t *peer_addr, u8_t own_addr_type,
 			  u16_t interval, u16_t latency, u16_t timeout);
 u8_t ll_connect_disable(void **rx);
 u8_t ll_conn_update(u16_t handle, u8_t cmd, u8_t status, u16_t interval_min,
@@ -81,8 +81,11 @@ u8_t ll_feature_req_send(u16_t handle);
 u8_t ll_version_ind_send(u16_t handle);
 u8_t ll_terminate_ind_send(u16_t handle, u8_t reason);
 u8_t ll_rssi_get(u16_t handle, u8_t *rssi);
-u8_t ll_tx_pwr_lvl_get(u16_t handle, u8_t type, s8_t *tx_pwr_lvl);
+u8_t ll_tx_pwr_lvl_get(u8_t handle_type,
+		       u16_t handle, u8_t type, s8_t *tx_pwr_lvl);
 void ll_tx_pwr_get(s8_t *min, s8_t *max);
+u8_t ll_tx_pwr_lvl_set(u8_t handle_type,
+		       u16_t handle, s8_t *tx_pwr_lvl);
 
 u8_t ll_apto_get(u16_t handle, u16_t *apto);
 u8_t ll_apto_set(u16_t handle, u16_t apto);

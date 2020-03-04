@@ -21,7 +21,7 @@
  */
 
 #include <kernel.h>
-#include <atomic.h>
+#include <sys/atomic.h>
 
 #include <net/net_ip.h>
 #include <net/net_if.h>
@@ -57,6 +57,12 @@ enum net_context_state {
 
 /** Remote address set */
 #define NET_CONTEXT_REMOTE_ADDR_SET  BIT(8)
+
+/** Is the socket accepting connections */
+#define NET_CONTEXT_ACCEPTING_SOCK  BIT(9)
+
+/** Is the socket closing / closed */
+#define NET_CONTEXT_CLOSING_SOCK  BIT(10)
 
 struct net_context;
 
@@ -244,10 +250,15 @@ struct net_context {
 	net_pkt_get_pool_func_t data_pool;
 #endif /* CONFIG_NET_CONTEXT_NET_PKT_POOL */
 
-#if defined(CONFIG_NET_TCP)
+#if defined(CONFIG_NET_TCP1)
 	/** TCP connection information */
 	struct net_tcp *tcp;
-#endif /* CONFIG_NET_TCP */
+#endif /* CONFIG_NET_TCP1 */
+
+#if defined(CONFIG_NET_TCP2)
+	/** TCP connection information */
+	void *tcp;
+#endif /* CONFIG_NET_TCP2 */
 
 #if defined(CONFIG_NET_CONTEXT_SYNC_RECV)
 	/**
@@ -257,6 +268,9 @@ struct net_context {
 #endif /* CONFIG_NET_CONTEXT_SYNC_RECV */
 
 #if defined(CONFIG_NET_SOCKETS)
+	/** BSD socket private data */
+	void *socket_data;
+
 	/** Per-socket packet or connection queues */
 	union {
 		struct k_fifo recv_q;
@@ -274,6 +288,10 @@ struct net_context {
 	void *offload_context;
 #endif /* CONFIG_NET_OFFLOAD */
 
+#if defined(CONFIG_NET_SOCKETS_CAN)
+	int can_filter_id;
+#endif /* CONFIG_NET_SOCKETS_CAN */
+
 	/** Option values */
 	struct {
 #if defined(CONFIG_NET_CONTEXT_PRIORITY)
@@ -282,6 +300,15 @@ struct net_context {
 #endif
 #if defined(CONFIG_NET_CONTEXT_TIMESTAMP)
 		bool timestamp;
+#endif
+#if defined(CONFIG_NET_CONTEXT_TXTIME)
+		bool txtime;
+#endif
+#if defined(CONFIG_SOCKS)
+		struct {
+			struct sockaddr addr;
+			socklen_t addrlen;
+		} proxy;
 #endif
 	} options;
 
@@ -299,6 +326,11 @@ struct net_context {
 		u8_t ipv6_hop_limit;
 		u8_t ipv4_ttl;
 	};
+
+#if defined(CONFIG_SOCKS)
+	bool proxy_enabled;
+#endif
+
 };
 
 static inline bool net_context_is_used(struct net_context *context)
@@ -306,6 +338,70 @@ static inline bool net_context_is_used(struct net_context *context)
 	NET_ASSERT(context);
 
 	return context->flags & NET_CONTEXT_IN_USE;
+}
+
+/**
+ * @brief Is this context is accepting data now.
+ *
+ * @param context Network context.
+ *
+ * @return True if the context is accepting connections, False otherwise.
+ */
+static inline bool net_context_is_accepting(struct net_context *context)
+{
+	NET_ASSERT(context);
+
+	return context->flags & NET_CONTEXT_ACCEPTING_SOCK;
+}
+
+/**
+ * @brief Set this context to accept data now.
+ *
+ * @param context Network context.
+ * @param accepting True if accepting, False if not
+ */
+static inline void net_context_set_accepting(struct net_context *context,
+					     bool accepting)
+{
+	NET_ASSERT(context);
+
+	if (accepting) {
+		context->flags |= NET_CONTEXT_ACCEPTING_SOCK;
+	} else {
+		context->flags &= ~NET_CONTEXT_ACCEPTING_SOCK;
+	}
+}
+
+/**
+ * @brief Is this context closing.
+ *
+ * @param context Network context.
+ *
+ * @return True if the context is closing, False otherwise.
+ */
+static inline bool net_context_is_closing(struct net_context *context)
+{
+	NET_ASSERT(context);
+
+	return context->flags & NET_CONTEXT_CLOSING_SOCK;
+}
+
+/**
+ * @brief Set this context to closing.
+ *
+ * @param context Network context.
+ * @param closing True if closing, False if not
+ */
+static inline void net_context_set_closing(struct net_context *context,
+					   bool closing)
+{
+	NET_ASSERT(context);
+
+	if (closing) {
+		context->flags |= NET_CONTEXT_CLOSING_SOCK;
+	} else {
+		context->flags &= ~NET_CONTEXT_CLOSING_SOCK;
+	}
 }
 
 #define NET_CONTEXT_STATE_SHIFT 1
@@ -433,6 +529,56 @@ static inline void net_context_set_type(struct net_context *context,
 }
 
 /**
+ * @brief Set CAN filter id for this network context.
+ *
+ * @details This function sets the CAN filter id of the context.
+ *
+ * @param context Network context.
+ * @param filter_id CAN filter id
+ */
+#if defined(CONFIG_NET_SOCKETS_CAN)
+static inline void net_context_set_filter_id(struct net_context *context,
+					     int filter_id)
+{
+	NET_ASSERT(context);
+
+	context->can_filter_id = filter_id;
+}
+#else
+static inline void net_context_set_filter_id(struct net_context *context,
+					     int filter_id)
+{
+	ARG_UNUSED(context);
+	ARG_UNUSED(filter_id);
+}
+#endif
+
+/**
+ * @brief Get CAN filter id for this network context.
+ *
+ * @details This function gets the CAN filter id of the context.
+ *
+ * @param context Network context.
+ *
+ * @return Filter id of this network context
+ */
+#if defined(CONFIG_NET_SOCKETS_CAN)
+static inline int net_context_get_filter_id(struct net_context *context)
+{
+	NET_ASSERT(context);
+
+	return context->can_filter_id;
+}
+#else
+static inline int net_context_get_filter_id(struct net_context *context)
+{
+	ARG_UNUSED(context);
+
+	return -1;
+}
+#endif
+
+/**
  * @brief Get context IP protocol for this network context.
  *
  * @details This function returns the IP protocol (UDP / TCP /
@@ -518,6 +664,31 @@ static inline void net_context_set_ipv6_hop_limit(struct net_context *context,
 {
 	context->ipv6_hop_limit = hop_limit;
 }
+
+#if defined(CONFIG_SOCKS)
+static inline void net_context_set_proxy_enabled(struct net_context *context,
+						 bool enable)
+{
+	context->proxy_enabled = enable;
+}
+
+static inline bool net_context_is_proxy_enabled(struct net_context *context)
+{
+	return context->proxy_enabled;
+}
+#else
+static inline void net_context_set_proxy_enabled(struct net_context *context,
+						 bool enable)
+{
+	ARG_UNUSED(context);
+	ARG_UNUSED(enable);
+}
+
+static inline bool net_context_is_proxy_enabled(struct net_context *context)
+{
+	return false;
+}
+#endif
 
 /**
  * @brief Get network context.
@@ -732,24 +903,17 @@ int net_context_accept(struct net_context *context,
  * @brief Send data to a peer.
  *
  * @details This function can be used to send network data to a peer
- * connection. This function will return immediately if the timeout
- * is set to K_NO_WAIT. If the timeout is set to K_FOREVER, the function
- * will wait until the network buffer is sent. Timeout value > 0 will
- * wait as many ms. After the network buffer is sent,
- * a caller-supplied callback is called. The callback is called even
- * if timeout was set to K_FOREVER, the callback is called
- * before this function will return in this case. The callback is not
- * called if the timeout expires. For context of type SOCK_DGRAM,
- * the destination address must have been set by the call to
- * net_context_connect().
+ * connection. After the network buffer is sent, a caller-supplied
+ * callback is called. Note that the callback might be called after this
+ * function has returned. For context of type SOCK_DGRAM, the destination
+ * address must have been set by the call to net_context_connect().
  * This is similar as BSD send() function.
  *
  * @param context The network context to use.
  * @param buf The data buffer to send
  * @param len Length of the buffer
  * @param cb Caller-supplied callback function.
- * @param timeout Timeout for the connection. Possible values
- * are K_FOREVER, K_NO_WAIT, >0.
+ * @param timeout Currently this value is not used.
  * @param user_data Caller-supplied user data.
  *
  * @return 0 if ok, < 0 if error
@@ -766,14 +930,9 @@ int net_context_send(struct net_context *context,
  *
  * @details This function can be used to send network data to a peer
  * specified by address. This variant can only be used for datagram
- * connections of type SOCK_DGRAM. This function will return immediately
- * if the timeout is set to K_NO_WAIT. If the timeout is set to K_FOREVER,
- * the function will wait until the network buffer is sent. Timeout
- * value > 0 will wait as many ms. After the network buffer
- * is sent, a caller-supplied callback is called. The callback is called
- * even if timeout was set to K_FOREVER, the callback is called
- * before this function will return. The callback is not called if the
- * timeout expires.
+ * connections of type SOCK_DGRAM. After the network buffer is sent,
+ * a caller-supplied callback is called. Note that the callback might be
+ * called after this function has returned.
  * This is similar as BSD sendto() function.
  *
  * @param context The network context to use.
@@ -782,8 +941,7 @@ int net_context_send(struct net_context *context,
  * @param dst_addr Destination address.
  * @param addrlen Length of the address.
  * @param cb Caller-supplied callback function.
- * @param timeout Timeout for the connection. Possible values
- * are K_FOREVER, K_NO_WAIT, >0.
+ * @param timeout Currently this value is not used.
  * @param user_data Caller-supplied user data.
  *
  * @return numbers of bytes sent on success, a negative errno otherwise
@@ -796,6 +954,31 @@ int net_context_sendto(struct net_context *context,
 		       net_context_send_cb_t cb,
 		       s32_t timeout,
 		       void *user_data);
+
+/**
+ * @brief Send data in iovec to a peer specified in msghdr struct.
+ *
+ * @details This function has similar semantics as Posix sendmsg() call.
+ * For unconnected socket, the msg_name field in msghdr must be set. For
+ * connected socket the msg_name should be set to NULL, and msg_namelen to 0.
+ * After the network buffer is sent, a caller-supplied callback is called.
+ * Note that the callback might be called after this function has returned.
+ *
+ * @param context The network context to use.
+ * @param msghdr The data to send
+ * @param flags Flags for the sending.
+ * @param cb Caller-supplied callback function.
+ * @param timeout Currently this value is not used.
+ * @param user_data Caller-supplied user data.
+ *
+ * @return numbers of bytes sent on success, a negative errno otherwise
+ */
+int net_context_sendmsg(struct net_context *context,
+			const struct msghdr *msghdr,
+			int flags,
+			net_context_send_cb_t cb,
+			s32_t timeout,
+			void *user_data);
 
 /**
  * @brief Receive network data from a peer specified by context.
@@ -864,6 +1047,8 @@ int net_context_update_recv_wnd(struct net_context *context,
 enum net_context_option {
 	NET_OPT_PRIORITY	= 1,
 	NET_OPT_TIMESTAMP	= 2,
+	NET_OPT_TXTIME		= 3,
+	NET_OPT_SOCKS5		= 4,
 };
 
 /**

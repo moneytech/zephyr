@@ -12,13 +12,13 @@
 
 #include <zephyr.h>
 #include <arch/cpu.h>
-#include <misc/byteorder.h>
+#include <sys/byteorder.h>
 #include <logging/log.h>
-#include <misc/util.h>
+#include <sys/util.h>
 
 #include <device.h>
 #include <init.h>
-#include <uart.h>
+#include <drivers/uart.h>
 
 #include <net/buf.h>
 #include <bluetooth/bluetooth.h>
@@ -36,8 +36,8 @@ static struct k_thread tx_thread_data;
 
 /* HCI command buffers */
 #define CMD_BUF_SIZE BT_BUF_RX_SIZE
-NET_BUF_POOL_DEFINE(cmd_tx_pool, CONFIG_BT_HCI_CMD_COUNT, CMD_BUF_SIZE,
-		    BT_BUF_USER_DATA_MIN, NULL);
+NET_BUF_POOL_FIXED_DEFINE(cmd_tx_pool, CONFIG_BT_HCI_CMD_COUNT, CMD_BUF_SIZE,
+			  NULL);
 
 #if defined(CONFIG_BT_CTLR_TX_BUFFER_SIZE)
 #define BT_L2CAP_MTU (CONFIG_BT_CTLR_TX_BUFFER_SIZE - BT_L2CAP_HDR_SIZE)
@@ -54,8 +54,7 @@ NET_BUF_POOL_DEFINE(cmd_tx_pool, CONFIG_BT_HCI_CMD_COUNT, CMD_BUF_SIZE,
 #define TX_BUF_COUNT 6
 #endif
 
-NET_BUF_POOL_DEFINE(acl_tx_pool, TX_BUF_COUNT, BT_BUF_ACL_SIZE,
-		    BT_BUF_USER_DATA_MIN, NULL);
+NET_BUF_POOL_FIXED_DEFINE(acl_tx_pool, TX_BUF_COUNT, BT_BUF_ACL_SIZE, NULL);
 
 static K_FIFO_DEFINE(tx_queue);
 
@@ -329,6 +328,7 @@ static int hci_uart_init(struct device *unused)
 {
 	LOG_DBG("");
 
+	/* Derived from DT's bt-c2h-uart chosen node */
 	hci_uart_dev = device_get_binding(CONFIG_BT_CTLR_TO_HOST_UART_DEV_NAME);
 	if (!hci_uart_dev) {
 		return -EINVAL;
@@ -354,6 +354,7 @@ void main(void)
 	int err;
 
 	LOG_DBG("Start");
+	__ASSERT(hci_uart_dev, "UART device is NULL");
 
 	/* Enable the raw interface, this will in turn open the HCI driver */
 	bt_enable_raw(&rx_queue);

@@ -13,9 +13,10 @@
 #ifndef ZEPHYR_INCLUDE_NET_ETHERNET_H_
 #define ZEPHYR_INCLUDE_NET_ETHERNET_H_
 
+#include <kernel.h>
 #include <zephyr/types.h>
 #include <stdbool.h>
-#include <atomic.h>
+#include <sys/atomic.h>
 
 #include <net/net_ip.h>
 #include <net/net_pkt.h>
@@ -24,7 +25,7 @@
 #include <net/lldp.h>
 #endif
 
-#include <misc/util.h>
+#include <sys/util.h>
 #include <net/net_if.h>
 #include <net/ethernet_vlan.h>
 
@@ -75,14 +76,16 @@ struct net_eth_addr {
 #define NET_ETH_MTU			1500
 #define NET_ETH_MAX_FRAME_SIZE	(NET_ETH_MTU + sizeof(struct net_eth_hdr))
 
+#define NET_ETH_VLAN_HDR_SIZE	4
+
 /** @endcond */
 
 /** Ethernet hardware capabilities */
 enum ethernet_hw_caps {
-	/** TX Checksum offloading supported */
+	/** TX Checksum offloading supported for all of IPv4, UDP, TCP */
 	ETHERNET_HW_TX_CHKSUM_OFFLOAD	= BIT(0),
 
-	/** RX Checksum offloading supported */
+	/** RX Checksum offloading supported for all of IPv4, UDP, TCP */
 	ETHERNET_HW_RX_CHKSUM_OFFLOAD	= BIT(1),
 
 	/** VLAN supported */
@@ -120,6 +123,9 @@ enum ethernet_hw_caps {
 
 	/** Link Layer Discovery Protocol supported */
 	ETHERNET_LLDP			= BIT(13),
+
+	/** VLAN Tag stripping */
+	ETHERNET_HW_VLAN_TAG_STRIP	= BIT(14),
 };
 
 /** @cond INTERNAL_HIDDEN */
@@ -258,6 +264,11 @@ struct ethernet_api {
 	/** Send a network packet */
 	int (*send)(struct device *dev, struct net_pkt *pkt);
 };
+
+/* Make sure that the network interface API is properly setup inside
+ * Ethernet API struct (it is the first one).
+ */
+BUILD_ASSERT(offsetof(struct ethernet_api, iface_api) == 0);
 
 /** @cond INTERNAL_HIDDEN */
 struct net_eth_hdr {
@@ -481,10 +492,10 @@ static inline
 enum ethernet_hw_caps net_eth_get_hw_capabilities(struct net_if *iface)
 {
 	const struct ethernet_api *eth =
-		net_if_get_device(iface)->driver_api;
+		(struct ethernet_api *)net_if_get_device(iface)->driver_api;
 
 	if (!eth->get_capabilities) {
-		return 0;
+		return (enum ethernet_hw_caps)0;
 	}
 
 	return eth->get_capabilities(net_if_get_device(iface));
@@ -666,7 +677,27 @@ int net_eth_promisc_mode(struct net_if *iface, bool enable);
  * @return Pointer to PTP clock if found, NULL if not found or if this
  * ethernet interface does not support PTP.
  */
+#if defined(CONFIG_PTP_CLOCK)
 struct device *net_eth_get_ptp_clock(struct net_if *iface);
+#else
+static inline struct device *net_eth_get_ptp_clock(struct net_if *iface)
+{
+	ARG_UNUSED(iface);
+
+	return NULL;
+}
+#endif
+
+/**
+ * @brief Return PTP clock that is tied to this ethernet network interface
+ * index.
+ *
+ * @param index Network interface index
+ *
+ * @return Pointer to PTP clock if found, NULL if not found or if this
+ * ethernet interface index does not support PTP.
+ */
+__syscall struct device *net_eth_get_ptp_clock_by_index(int index);
 
 /**
  * @brief Return gPTP port number attached to this interface.
@@ -696,12 +727,14 @@ static inline int net_eth_get_ptp_port(struct net_if *iface)
 void net_eth_set_ptp_port(struct net_if *iface, int port);
 #endif /* CONFIG_NET_GPTP */
 
+/**
+ * @}
+ */
+
 #ifdef __cplusplus
 }
 #endif
 
-/**
- * @}
- */
+#include <syscalls/ethernet.h>
 
 #endif /* ZEPHYR_INCLUDE_NET_ETHERNET_H_ */

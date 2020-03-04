@@ -33,8 +33,12 @@ LOG_MODULE_REGISTER(net_mdns_responder, CONFIG_MDNS_RESPONDER_LOG_LEVEL);
 
 #define MDNS_TTL CONFIG_MDNS_RESPONDER_TTL /* In seconds */
 
+#if defined(CONFIG_NET_IPV4)
 static struct net_context *ipv4;
+#endif
+#if defined(CONFIG_NET_IPV6)
 static struct net_context *ipv6;
+#endif
 
 #define BUF_ALLOC_TIMEOUT K_MSEC(100)
 
@@ -153,6 +157,9 @@ static void add_answer(struct net_buf *query, enum dns_rr_type qtype,
 	if (prev) {
 		*prev = strlen(prev) - 1;
 	}
+
+	/* terminator byte (0x00) */
+	query->len += 1;
 
 	offset = DNS_MSG_HEADER_SIZE + query->len;
 	UNALIGNED_PUT(htons(qtype), (u16_t *)(query->data+offset));

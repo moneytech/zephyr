@@ -5,7 +5,7 @@
  */
 
 #include <errno.h>
-#include <pwm.h>
+#include <drivers/pwm.h>
 #include <soc.h>
 #include <device_imx.h>
 
@@ -52,7 +52,8 @@ static int imx_pwm_get_cycles_per_sec(struct device *dev, u32_t pwm,
 }
 
 static int imx_pwm_pin_set(struct device *dev, u32_t pwm,
-			    u32_t period_cycles, u32_t pulse_cycles)
+			   u32_t period_cycles, u32_t pulse_cycles,
+			   pwm_flags_t flags)
 {
 	PWM_Type *base = DEV_BASE(dev);
 	const struct imx_pwm_config *config = DEV_CFG(dev);
@@ -67,6 +68,11 @@ static int imx_pwm_pin_set(struct device *dev, u32_t pwm,
 		LOG_ERR("Invalid combination: period_cycles=%d, "
 			    "pulse_cycles=%d", period_cycles, pulse_cycles);
 		return -EINVAL;
+	}
+
+	if (flags) {
+		/* PWM polarity not supported (yet?) */
+		return -ENOTSUP;
 	}
 
 	LOG_DBG("enabled=%d, pulse_cycles=%d, period_cycles=%d,"
@@ -96,7 +102,7 @@ static int imx_pwm_pin_set(struct device *dev, u32_t pwm,
 	} else {
 		PWM_PWMCR_REG(base) = PWM_PWMCR_SWR(1);
 		do {
-			k_sleep(1);
+			k_sleep(K_MSEC(1));
 			cr = PWM_PWMCR_REG(base);
 		} while ((PWM_PWMCR_SWR(cr)) &&
 			 (++wait_count < CONFIG_PWM_PWMSWR_LOOP));
@@ -154,13 +160,13 @@ static const struct pwm_driver_api imx_pwm_driver_api = {
 
 #ifdef CONFIG_PWM_1
 static const struct imx_pwm_config imx_pwm_config_1 = {
-	.base = (PWM_Type *)PWM_1_BASE_ADDRESS,
-	.prescaler = PWM_1_PRESCALER,
+	.base = (PWM_Type *)DT_ALIAS_PWM_1_BASE_ADDRESS,
+	.prescaler = DT_ALIAS_PWM_1_PRESCALER,
 };
 
 static struct imx_pwm_data imx_pwm_data_1;
 
-DEVICE_AND_API_INIT(imx_pwm_1, PWM_1_LABEL, &imx_pwm_init,
+DEVICE_AND_API_INIT(imx_pwm_1, DT_ALIAS_PWM_1_LABEL, &imx_pwm_init,
 		    &imx_pwm_data_1, &imx_pwm_config_1,
 		    POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEVICE,
 		    &imx_pwm_driver_api);
@@ -168,13 +174,13 @@ DEVICE_AND_API_INIT(imx_pwm_1, PWM_1_LABEL, &imx_pwm_init,
 
 #ifdef CONFIG_PWM_2
 static const struct imx_pwm_config imx_pwm_config_2 = {
-	.base = (PWM_Type *)PWM_2_BASE_ADDRESS,
-	.prescaler = PWM_2_PRESCALER,
+	.base = (PWM_Type *)DT_ALIAS_PWM_2_BASE_ADDRESS,
+	.prescaler = DT_ALIAS_PWM_2_PRESCALER,
 };
 
 static struct imx_pwm_data imx_pwm_data_2;
 
-DEVICE_AND_API_INIT(imx_pwm_2, PWM_2_LABEL, &imx_pwm_init,
+DEVICE_AND_API_INIT(imx_pwm_2, DT_ALIAS_PWM_2_LABEL, &imx_pwm_init,
 		    &imx_pwm_data_2, &imx_pwm_config_2,
 		    POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEVICE,
 		    &imx_pwm_driver_api);
@@ -182,13 +188,13 @@ DEVICE_AND_API_INIT(imx_pwm_2, PWM_2_LABEL, &imx_pwm_init,
 
 #ifdef CONFIG_PWM_3
 static const struct imx_pwm_config imx_pwm_config_3 = {
-	.base = (PWM_Type *)PWM_3_BASE_ADDRESS,
-	.prescaler = PWM_3_PRESCALER,
+	.base = (PWM_Type *)DT_ALIAS_PWM_3_BASE_ADDRESS,
+	.prescaler = DT_ALIAS_PWM_3_PRESCALER,
 };
 
 static struct imx_pwm_data imx_pwm_data_3;
 
-DEVICE_AND_API_INIT(imx_pwm_3, PWM_3_LABEL, &imx_pwm_init,
+DEVICE_AND_API_INIT(imx_pwm_3, DT_ALIAS_PWM_3_LABEL, &imx_pwm_init,
 		    &imx_pwm_data_3, &imx_pwm_config_3,
 		    POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEVICE,
 		    &imx_pwm_driver_api);
@@ -196,13 +202,13 @@ DEVICE_AND_API_INIT(imx_pwm_3, PWM_3_LABEL, &imx_pwm_init,
 
 #ifdef CONFIG_PWM_4
 static const struct imx_pwm_config imx_pwm_config_4 = {
-	.base = (PWM_Type *)PWM_4_BASE_ADDRESS,
-	.prescaler = PWM_4_PRESCALER,
+	.base = (PWM_Type *)DT_ALIAS_PWM_4_BASE_ADDRESS
+	.prescaler = DT_ALIAS_PWM_4_PRESCALER,
 };
 
 static struct imx_pwm_data imx_pwm_data_4;
 
-DEVICE_AND_API_INIT(imx_pwm_4, PWM_4_LABEL, &imx_pwm_init,
+DEVICE_AND_API_INIT(imx_pwm_4, DT_ALIAS_PWM_4_LABEL, &imx_pwm_init,
 		    &imx_pwm_data_4, &imx_pwm_config_4,
 		    POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEVICE,
 		    &imx_pwm_driver_api);

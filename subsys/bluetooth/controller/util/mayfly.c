@@ -7,7 +7,7 @@
 
 #include <stddef.h>
 #include <zephyr/types.h>
-#include <misc/printk.h>
+#include <sys/printk.h>
 #include "memq.h"
 #include "mayfly.h"
 
@@ -58,6 +58,10 @@ void mayfly_enable(u8_t caller_id, u8_t callee_id, u8_t enable)
 		    mft[callee_id][caller_id].disable_ack) {
 			mft[callee_id][caller_id].disable_req++;
 
+			/* set mayfly callee pending */
+			mfp[callee_id] = 1U;
+
+			/* pend the callee for execution */
 			mayfly_pend(caller_id, callee_id);
 		}
 	}
@@ -174,7 +178,7 @@ void mayfly_run(u8_t callee_id)
 	if (!mfp[callee_id]) {
 		return;
 	}
-	mfp[callee_id] = 1U;
+	mfp[callee_id] = 0U;
 
 	/* iterate through each caller queue to this callee_id */
 	caller_id = MAYFLY_CALLER_COUNT;
@@ -215,6 +219,17 @@ void mayfly_run(u8_t callee_id)
 					 mft[callee_id][caller_id].tail,
 					 (void **)&m);
 
+/**
+ * When using cooperative thread implementation, an issue has been seen where
+ * pended mayflies are never executed in certain scenarios.
+ * This happens when mayflies with higher caller_id are constantly pended, in
+ * which case lower value caller ids never get to be executed.
+ * By allowing complete traversal of mayfly queues for all caller_ids, this
+ * does not happen, however this means that more than one mayfly function is
+ * potentially executed in a mayfly_run(), with added execution time as
+ * consequence.
+ */
+#if defined(CONFIG_BT_MAYFLY_YIELD_AFTER_CALL)
 			/* yield out of mayfly_run if a mayfly function was
 			 * called.
 			 */
@@ -224,11 +239,16 @@ void mayfly_run(u8_t callee_id)
 				 * processed.
 				 */
 				if (caller_id || link) {
+					/* set mayfly callee pending */
+					mfp[callee_id] = 1U;
+
+					/* pend the callee for execution */
 					mayfly_pend(callee_id, callee_id);
 
 					return;
 				}
 			}
+#endif
 		}
 
 		if (mft[callee_id][caller_id].disable_req !=

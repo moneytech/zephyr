@@ -14,7 +14,7 @@
 #include <init.h>
 #include <soc.h>
 #include <arch/cpu.h>
-#include <cortex_m/exc.h>
+#include <arch/arm/aarch32/cortex_m/cmsis.h>
 
 /**
  * @brief Perform basic hardware initialization at boot.
@@ -36,8 +36,6 @@ static int st_stm32f7_init(struct device *arg)
 	if (!(SCB->CCR & SCB_CCR_DC_Msk)) {
 		SCB_EnableDCache();
 	}
-
-	z_clearfaults();
 
 	/* Install default handler that simply resets the CPU
 	 * if configured in the kernel, NOP otherwise

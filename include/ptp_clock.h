@@ -7,9 +7,10 @@
 #ifndef ZEPHYR_INCLUDE_PTP_CLOCK_H_
 #define ZEPHYR_INCLUDE_PTP_CLOCK_H_
 
+#include <kernel.h>
 #include <stdint.h>
 #include <device.h>
-#include <misc/util.h>
+#include <sys/util.h>
 #include <net/ptp_time.h>
 
 #ifdef __cplusplus
@@ -38,7 +39,8 @@ struct ptp_clock_driver_api {
  */
 static inline int ptp_clock_set(struct device *dev, struct net_ptp_time *tm)
 {
-	const struct ptp_clock_driver_api *api = dev->driver_api;
+	const struct ptp_clock_driver_api *api =
+		(const struct ptp_clock_driver_api *)dev->driver_api;
 
 	return api->set(dev, tm);
 }
@@ -51,9 +53,13 @@ static inline int ptp_clock_set(struct device *dev, struct net_ptp_time *tm)
  *
  * @return 0 if ok, <0 if error
  */
-static inline int ptp_clock_get(struct device *dev, struct net_ptp_time *tm)
+__syscall int ptp_clock_get(struct device *dev, struct net_ptp_time *tm);
+
+static inline int z_impl_ptp_clock_get(struct device *dev,
+				       struct net_ptp_time *tm)
 {
-	const struct ptp_clock_driver_api *api = dev->driver_api;
+	const struct ptp_clock_driver_api *api =
+		(const struct ptp_clock_driver_api *)dev->driver_api;
 
 	return api->get(dev, tm);
 }
@@ -68,7 +74,8 @@ static inline int ptp_clock_get(struct device *dev, struct net_ptp_time *tm)
  */
 static inline int ptp_clock_adjust(struct device *dev, int increment)
 {
-	const struct ptp_clock_driver_api *api = dev->driver_api;
+	const struct ptp_clock_driver_api *api =
+		(const struct ptp_clock_driver_api *)dev->driver_api;
 
 	return api->adjust(dev, increment);
 }
@@ -83,7 +90,8 @@ static inline int ptp_clock_adjust(struct device *dev, int increment)
  */
 static inline int ptp_clock_rate_adjust(struct device *dev, float rate)
 {
-	const struct ptp_clock_driver_api *api = dev->driver_api;
+	const struct ptp_clock_driver_api *api =
+		(const struct ptp_clock_driver_api *)dev->driver_api;
 
 	return api->rate_adjust(dev, rate);
 }
@@ -91,5 +99,7 @@ static inline int ptp_clock_rate_adjust(struct device *dev, float rate)
 #ifdef __cplusplus
 }
 #endif
+
+#include <syscalls/ptp_clock.h>
 
 #endif /* ZEPHYR_INCLUDE_PTP_CLOCK_H_ */

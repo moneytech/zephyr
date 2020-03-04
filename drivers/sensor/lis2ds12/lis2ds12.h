@@ -12,8 +12,8 @@
 #define ZEPHYR_DRIVERS_SENSOR_LIS2DS12_LIS2DS12_H_
 
 #include <zephyr/types.h>
-#include <sensor.h>
-#include <gpio.h>
+#include <drivers/sensor.h>
+#include <drivers/gpio.h>
 
 #define LIS2DS12_REG_WHO_AM_I			0x0F
 #define LIS2DS12_VAL_WHO_AM_I			0x43
@@ -84,6 +84,11 @@
 struct lis2ds12_config {
 	char *comm_master_dev_name;
 	int (*bus_init)(struct device *dev);
+#ifdef CONFIG_LIS2DS12_TRIGGER
+	const char *irq_port;
+	gpio_pin_t irq_pin;
+	gpio_dt_flags_t irq_flags;
+#endif
 };
 
 struct lis2ds12_data;

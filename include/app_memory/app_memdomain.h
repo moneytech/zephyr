@@ -7,19 +7,10 @@
 #define ZEPHYR_INCLUDE_APP_MEMORY_APP_MEMDOMAIN_H_
 
 #include <linker/linker-defs.h>
-#include <misc/dlist.h>
+#include <sys/dlist.h>
 #include <kernel.h>
 
 #ifdef CONFIG_USERSPACE
-
-#if defined(CONFIG_X86)
-#define MEM_DOMAIN_ALIGN_SIZE _STACK_BASE_ALIGN
-#elif defined(STACK_ALIGN)
-#define MEM_DOMAIN_ALIGN_SIZE STACK_ALIGN
-#else
-#error "Not implemented for this architecture"
-#endif
-
 
 /**
  * @brief Name of the data section for a particular partition
@@ -119,8 +110,8 @@ struct z_app_region {
 	extern char Z_APP_START(name)[]; \
 	extern char Z_APP_SIZE(name)[]; \
 	struct k_mem_partition name = { \
-		.start = (u32_t) &Z_APP_START(name), \
-		.size = (u32_t) &Z_APP_SIZE(name), \
+		.start = (uintptr_t) &Z_APP_START(name), \
+		.size = (size_t) &Z_APP_SIZE(name), \
 		.attr = K_MEM_PARTITION_P_RW_U_RW \
 	}; \
 	extern char Z_APP_BSS_START(name)[]; \

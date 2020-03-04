@@ -28,7 +28,7 @@ SiP.
 
 More information about the board can be found at
 the `Nordic Low power cellular IoT`_ website.
-The `Nordic Semiconductor documentation library`_
+The `Nordic Semiconductor Infocenter`_
 contains the processor's information and the datasheet.
 
 Hardware
@@ -137,7 +137,7 @@ By default, the board controller firmware will route the following:
 +-----------------+----------------------------------+
 | nRF9160 UART1   | VCOM2                            |
 +-----------------+----------------------------------+
-| Leds 1-4        | physical LEDs                    |
+| LEDs 1-4        | physical LEDs                    |
 +-----------------+----------------------------------+
 | Buttons 1-2     | physical buttons                 |
 +-----------------+----------------------------------+
@@ -159,6 +159,5 @@ References
 
 .. target-notes::
 .. _Nordic Low power cellular IoT: https://www.nordicsemi.com/Products/Low-power-cellular-IoT
-.. _Nordic Semiconductor documentation library: https://www.nordicsemi.com/DocLib
+.. _Nordic Semiconductor Infocenter: https://infocenter.nordicsemi.com
 .. _J-Link Software and documentation pack: https://www.segger.com/jlink-software.html
-

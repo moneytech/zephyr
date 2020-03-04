@@ -10,8 +10,8 @@
 #include <zephyr/types.h>
 #include <errno.h>
 #include <init.h>
-#include <fs.h>
-#include <misc/__assert.h>
+#include <fs/fs.h>
+#include <sys/__assert.h>
 #include <ff.h>
 
 #define FATFS_MAX_FILE_NAME 12 /* Uses 8.3 SFN */
@@ -270,10 +270,12 @@ static int fatfs_readdir(struct fs_dir_t *zdp, struct fs_dirent *entry)
 
 	res = f_readdir(zdp->dirp, &fno);
 	if (res == FR_OK) {
-		entry->type = ((fno.fattrib & AM_DIR) ?
-			       FS_DIR_ENTRY_DIR : FS_DIR_ENTRY_FILE);
 		strcpy(entry->name, fno.fname);
-		entry->size = fno.fsize;
+		if (entry->name[0] != 0) {
+			entry->type = ((fno.fattrib & AM_DIR) ?
+			       FS_DIR_ENTRY_DIR : FS_DIR_ENTRY_FILE);
+			entry->size = fno.fsize;
+		}
 	}
 
 	return translate_error(res);
@@ -354,6 +356,15 @@ static int fatfs_mount(struct fs_mount_t *mountp)
 
 }
 
+static int fatfs_unmount(struct fs_mount_t *mountp)
+{
+	FRESULT res;
+
+	res = f_mount(NULL, &mountp->mnt_point[1], 1);
+
+	return translate_error(res);
+}
+
 /* File system interface */
 static struct fs_file_system_t fatfs_fs = {
 	.open = fatfs_open,
@@ -368,6 +379,7 @@ static struct fs_file_system_t fatfs_fs = {
 	.readdir = fatfs_readdir,
 	.closedir = fatfs_closedir,
 	.mount = fatfs_mount,
+	.unmount = fatfs_unmount,
 	.unlink = fatfs_unlink,
 	.rename = fatfs_rename,
 	.mkdir = fatfs_mkdir,

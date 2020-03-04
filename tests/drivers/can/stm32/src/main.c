@@ -3,7 +3,7 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
-#include <can.h>
+#include <drivers/can.h>
 #include <ztest.h>
 #include <strings.h>
 
@@ -32,8 +32,6 @@
  *   -# Message reception should work in any case
  * @}
  */
-
-
 
 #define TEST_SEND_TIMEOUT    K_MSEC(100)
 #define TEST_RECEIVE_TIMEOUT K_MSEC(100)
@@ -115,7 +113,7 @@ static void send_test_msg(struct device *can_dev, struct zcan_frame *msg)
 {
 	int ret;
 
-	ret = can_send(can_dev, msg, TEST_SEND_TIMEOUT, NULL);
+	ret = can_send(can_dev, msg, TEST_SEND_TIMEOUT, NULL, NULL);
 	zassert_not_equal(ret, CAN_TX_ARB_LOST,
 			  "Arbitration though in loopback mode");
 	zassert_equal(ret, CAN_TX_OK, "Can't send a message. Err: %d", ret);
@@ -132,7 +130,7 @@ static void test_filter_handling(void)
 	int ret, filter_id_1, filter_id_2;
 	struct zcan_frame msg_buffer;
 
-	can_dev = device_get_binding(DT_CAN_1_NAME);
+	can_dev = device_get_binding(DT_ALIAS_CAN_PRIMARY_LABEL);
 
 	ret = can_configure(can_dev, CAN_LOOPBACK_MODE, 0);
 

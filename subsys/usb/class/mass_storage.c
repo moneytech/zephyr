@@ -36,9 +36,9 @@
 #include <init.h>
 #include <errno.h>
 #include <string.h>
-#include <misc/byteorder.h>
-#include <misc/__assert.h>
-#include <disk_access.h>
+#include <sys/byteorder.h>
+#include <sys/__assert.h>
+#include <disk/disk_access.h>
 #include <usb/class/usb_msc.h>
 #include <usb/usb_device.h>
 #include <usb/usb_common.h>
@@ -109,7 +109,12 @@ static struct k_thread mass_thread_data;
 static struct k_sem disk_wait_sem;
 static volatile u32_t defered_wr_sz;
 
-static u8_t page[BLOCK_SIZE];
+/*
+ * Keep block buffer larger than BLOCK_SIZE for the case
+ * the dCBWDataTransferLength is multiple of the BLOCK_SIZE and
+ * the length of the transferred data is not aligned to the BLOCK_SIZE.
+ */
+static u8_t page[BLOCK_SIZE + CONFIG_MASS_STORAGE_BULK_EP_MPS];
 
 /* Initialized during mass_storage_init() */
 static u32_t memory_size;
@@ -433,6 +438,13 @@ static bool infoTransfer(void)
 				 (cbw.CB[5] <<  0);
 
 	LOG_DBG("LBA (block) : 0x%x ", n);
+	if ((n * BLOCK_SIZE) >= memory_size) {
+		LOG_ERR("LBA out of range");
+		csw.Status = CSW_FAILED;
+		sendCSW();
+		return false;
+	}
+
 	addr = n * BLOCK_SIZE;
 
 	/* Number of Blocks to transfer */
@@ -648,7 +660,7 @@ static void memoryWrite(u8_t *buf, u16_t size)
 	}
 
 	/* if the array is filled, write it in memory */
-	if (!((addr + size) % BLOCK_SIZE)) {
+	if ((addr % BLOCK_SIZE) + size >= BLOCK_SIZE) {
 		if (!(disk_access_status(disk_pdrv) &
 					DISK_STATUS_WR_PROTECT)) {
 			LOG_DBG("Disk WRITE Qd %d", (addr/BLOCK_SIZE));
@@ -726,6 +738,11 @@ static void mass_storage_bulk_out(u8_t ep,
 static void thread_memory_write_done(void)
 {
 	u32_t size = defered_wr_sz;
+	size_t overflowed_len = (addr + size) % CONFIG_MASS_STORAGE_BULK_EP_MPS;
+
+	if (overflowed_len) {
+		memcpy(page, &page[BLOCK_SIZE], overflowed_len);
+	}
 
 	addr += size;
 	length -= size;
@@ -854,7 +871,7 @@ static void mass_interface_config(struct usb_desc_header *head,
 }
 
 /* Configuration of the Mass Storage Device send to the USB Driver */
-USBD_CFG_DATA_DEFINE(msd) struct usb_cfg_data mass_storage_config = {
+USBD_CFG_DATA_DEFINE(primary, msd) struct usb_cfg_data mass_storage_config = {
 	.usb_device_description = NULL,
 	.interface_config = mass_interface_config,
 	.interface_descriptor = &mass_cfg.if0,
@@ -862,7 +879,6 @@ USBD_CFG_DATA_DEFINE(msd) struct usb_cfg_data mass_storage_config = {
 	.interface = {
 		.class_handler = mass_storage_class_handle_req,
 		.custom_handler = NULL,
-		.payload_data = NULL,
 	},
 	.num_endpoints = ARRAY_SIZE(mass_ep_data),
 	.endpoint = mass_ep_data
@@ -900,10 +916,6 @@ static void mass_thread_main(int arg1, int unused)
 		}
 	}
 }
-
-#ifndef CONFIG_USB_COMPOSITE_DEVICE
-static u8_t interface_data[64];
-#endif
 
 /**
  * @brief Initialize USB mass storage setup
@@ -954,33 +966,13 @@ static int mass_storage_init(struct device *dev)
 	msd_state_machine_reset();
 	msd_init();
 
-#ifndef CONFIG_USB_COMPOSITE_DEVICE
-	int ret;
-
-	mass_storage_config.interface.payload_data = interface_data;
-	mass_storage_config.usb_device_description =
-		usb_get_device_descriptor();
-	/* Initialize the USB driver with the right configuration */
-	ret = usb_set_config(&mass_storage_config);
-	if (ret < 0) {
-		LOG_ERR("Failed to config USB");
-		return ret;
-	}
-
-	/* Enable USB driver */
-	ret = usb_enable(&mass_storage_config);
-	if (ret < 0) {
-		LOG_ERR("Failed to enable USB");
-		return ret;
-	}
-#endif
 	k_sem_init(&disk_wait_sem, 0, 1);
 
 	/* Start a thread to offload disk ops */
 	k_thread_create(&mass_thread_data, mass_thread_stack,
 			DISK_THREAD_STACK_SZ,
 			(k_thread_entry_t)mass_thread_main, NULL, NULL, NULL,
-			DISK_THREAD_PRIO, 0, 0);
+			DISK_THREAD_PRIO, 0, K_NO_WAIT);
 
 	return 0;
 }

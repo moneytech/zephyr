@@ -159,7 +159,7 @@ void shell_help_subcmd_print(const struct shell *shell)
 
 	/* Searching for the longest subcommand to print. */
 	do {
-		shell_cmd_get(shell->ctx->active_cmd.subcmd,
+		shell_cmd_get(shell, shell->ctx->active_cmd.subcmd,
 			      !SHELL_CMD_ROOT_LVL,
 			      cmd_idx++, &entry, &static_entry);
 
@@ -182,7 +182,7 @@ void shell_help_subcmd_print(const struct shell *shell)
 	cmd_idx = 0;
 
 	while (true) {
-		shell_cmd_get(shell->ctx->active_cmd.subcmd,
+		shell_cmd_get(shell, shell->ctx->active_cmd.subcmd,
 			      !SHELL_CMD_ROOT_LVL,
 			      cmd_idx++, &entry, &static_entry);
 
@@ -208,4 +208,3 @@ void shell_help_cmd_print(const struct shell *shell)
 	formatted_text_print(shell, shell->ctx->active_cmd.help,
 			     field_width, false);
 }
-

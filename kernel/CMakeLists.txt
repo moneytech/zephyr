@@ -5,6 +5,7 @@
 add_library(kernel
   device.c
   errno.c
+  fatal.c
   idle.c
   init.c
   mailbox.c
@@ -34,7 +35,6 @@ set_target_properties(
   __ZEPHYR_SUPERVISOR__
   )
 
-target_sources_ifdef(CONFIG_INT_LATENCY_BENCHMARK kernel PRIVATE int_latency_bench.c)
 target_sources_ifdef(CONFIG_STACK_CANARIES        kernel PRIVATE compiler_stack_protect.c)
 target_sources_ifdef(CONFIG_SYS_CLOCK_EXISTS      kernel PRIVATE timeout.c timer.c)
 target_sources_ifdef(CONFIG_ATOMIC_OPERATIONS_C   kernel PRIVATE atomic_c.c)
@@ -47,12 +47,17 @@ target_sources_if_kconfig(                        kernel PRIVATE poll.c)
 target_sources_ifdef(
   CONFIG_USERSPACE
   kernel PRIVATE
+  futex.c
   mem_domain.c
   userspace_handler.c
   userspace.c
   )
 
+target_include_directories(kernel PRIVATE
+  ${ZEPHYR_BASE}/kernel/include
+  ${ZEPHYR_BASE}/arch/${ARCH}/include
+  )
 
-add_dependencies(kernel ${OFFSETS_H_TARGET})
+add_dependencies(kernel zephyr_generated_headers)
 
 target_link_libraries(kernel zephyr_interface)

@@ -26,7 +26,7 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 #include <device.h>
 #include <net/ieee802154_radio.h>
 #include <net/net_pkt.h>
-#include <misc/__assert.h>
+#include <sys/__assert.h>
 
 #include <openthread-system.h>
 #include <openthread/instance.h>
@@ -35,11 +35,19 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 
 #include "platform-zephyr.h"
 
+#define SHORT_ADDRESS_SIZE 2
+
 #define FCS_SIZE 2
+#define ACK_PKT_LENGTH 3
+
+#define FRAME_TYPE_MASK 0x07
+#define FRAME_TYPE_ACK 0x02
 
 static otRadioState sState = OT_RADIO_STATE_DISABLED;
 
 static otRadioFrame sTransmitFrame;
+static otRadioFrame ack_frame;
+static u8_t ack_psdu[ACK_PKT_LENGTH];
 
 static struct net_pkt *tx_pkt;
 static struct net_buf *tx_payload;
@@ -49,6 +57,38 @@ static struct ieee802154_radio_api *radio_api;
 
 static s8_t tx_power;
 static u16_t channel;
+
+enum net_verdict ieee802154_radio_handle_ack(struct net_if *iface,
+					     struct net_pkt *pkt)
+{
+	ARG_UNUSED(iface);
+
+	size_t ack_len = net_pkt_get_len(pkt);
+
+	if (ack_len != ACK_PKT_LENGTH) {
+		return NET_CONTINUE;
+	}
+
+	if ((*net_pkt_data(pkt) & FRAME_TYPE_MASK) != FRAME_TYPE_ACK) {
+		return NET_CONTINUE;
+	}
+
+	if (ack_frame.mLength != 0) {
+		LOG_ERR("Overwriting unhandled ACK frame.");
+	}
+
+	if (net_pkt_read(pkt, ack_psdu, ack_len) < 0) {
+		LOG_ERR("Failed to read ACK frame.");
+		return NET_CONTINUE;
+	}
+
+	ack_frame.mPsdu = ack_psdu;
+	ack_frame.mLength = ack_len;
+	ack_frame.mInfo.mRxInfo.mLqi = net_pkt_ieee802154_lqi(pkt);
+	ack_frame.mInfo.mRxInfo.mRssi = net_pkt_ieee802154_rssi(pkt);
+
+	return NET_OK;
+}
 
 static void dataInit(void)
 {
@@ -71,6 +111,9 @@ void platformRadioInit(void)
 	__ASSERT_NO_MSG(radio_dev != NULL);
 
 	radio_api = (struct ieee802154_radio_api *)radio_dev->driver_api;
+	if (!radio_api) {
+		return;
+	}
 
 	__ASSERT(radio_api->get_capabilities(radio_dev)
 		 & IEEE802154_HW_TX_RX_ACK,
@@ -118,25 +161,26 @@ void platformRadioProcess(otInstance *aInstance)
 		} else
 #endif
 		{
-			if (sTransmitFrame.mPsdu[0] & 0x20) {
-				/*
-				 * TODO: Get real ACK frame
-				 * instead of making a spoofed one
-				 */
-				otRadioFrame ackFrame;
-				u8_t ackPsdu[] = {0x02, 0x00, 0x00, 0x00, 0x00};
+			if (sTransmitFrame.mPsdu[0] & IEEE802154_AR_FLAG_SET) {
+				if (ack_frame.mLength == 0) {
+					LOG_DBG("No ACK received.");
 
-				ackPsdu[2] = sTransmitFrame.mPsdu[2];
-				ackFrame.mPsdu = ackPsdu;
-				ackFrame.mInfo.mRxInfo.mLqi = 80;
-				ackFrame.mInfo.mRxInfo.mRssi = -40;
-				ackFrame.mLength = 5;
+					result = OT_ERROR_NO_ACK;
+
+					otPlatRadioTxDone(aInstance,
+							  &sTransmitFrame,
+							  NULL, result);
+
+					return;
+				}
 
 				otPlatRadioTxDone(aInstance, &sTransmitFrame,
-					&ackFrame, result);
+						  &ack_frame, result);
+
+				ack_frame.mLength = 0;
 			} else {
 				otPlatRadioTxDone(aInstance, &sTransmitFrame,
-					NULL, result);
+						  NULL, result);
 			}
 		}
 	}
@@ -303,14 +347,33 @@ otError otPlatRadioEnergyScan(otInstance *aInstance, u8_t aScanChannel,
 void otPlatRadioEnableSrcMatch(otInstance *aInstance, bool aEnable)
 {
 	ARG_UNUSED(aInstance);
-	ARG_UNUSED(aEnable);
+
+	struct ieee802154_config config = {
+		.auto_ack_fpb.enabled = aEnable
+	};
+
+	(void)radio_api->configure(radio_dev, IEEE802154_CONFIG_AUTO_ACK_FPB,
+				   &config);
 }
 
 otError otPlatRadioAddSrcMatchShortEntry(otInstance *aInstance,
 					 const u16_t aShortAddress)
 {
 	ARG_UNUSED(aInstance);
-	ARG_UNUSED(aShortAddress);
+
+	u8_t short_address[SHORT_ADDRESS_SIZE];
+	struct ieee802154_config config = {
+		.ack_fpb.enabled = true,
+		.ack_fpb.addr = short_address,
+		.ack_fpb.extended = false
+	};
+
+	sys_put_le16(aShortAddress, short_address);
+
+	if (radio_api->configure(radio_dev, IEEE802154_CONFIG_ACK_FPB,
+				 &config) != 0) {
+		return OT_ERROR_NO_BUFS;
+	}
 
 	return OT_ERROR_NONE;
 }
@@ -319,7 +382,17 @@ otError otPlatRadioAddSrcMatchExtEntry(otInstance *aInstance,
 				       const otExtAddress *aExtAddress)
 {
 	ARG_UNUSED(aInstance);
-	ARG_UNUSED(aExtAddress);
+
+	struct ieee802154_config config = {
+		.ack_fpb.enabled = true,
+		.ack_fpb.addr = (u8_t *)aExtAddress->m8,
+		.ack_fpb.extended = true
+	};
+
+	if (radio_api->configure(radio_dev, IEEE802154_CONFIG_ACK_FPB,
+				 &config) != 0) {
+		return OT_ERROR_NO_BUFS;
+	}
 
 	return OT_ERROR_NONE;
 }
@@ -328,7 +401,20 @@ otError otPlatRadioClearSrcMatchShortEntry(otInstance *aInstance,
 					   const u16_t aShortAddress)
 {
 	ARG_UNUSED(aInstance);
-	ARG_UNUSED(aShortAddress);
+
+	u8_t short_address[SHORT_ADDRESS_SIZE];
+	struct ieee802154_config config = {
+		.ack_fpb.enabled = false,
+		.ack_fpb.addr = short_address,
+		.ack_fpb.extended = false
+	};
+
+	sys_put_le16(aShortAddress, short_address);
+
+	if (radio_api->configure(radio_dev, IEEE802154_CONFIG_ACK_FPB,
+				 &config) != 0) {
+		return OT_ERROR_NO_BUFS;
+	}
 
 	return OT_ERROR_NONE;
 }
@@ -337,7 +423,17 @@ otError otPlatRadioClearSrcMatchExtEntry(otInstance *aInstance,
 					 const otExtAddress *aExtAddress)
 {
 	ARG_UNUSED(aInstance);
-	ARG_UNUSED(aExtAddress);
+
+	struct ieee802154_config config = {
+		.ack_fpb.enabled = false,
+		.ack_fpb.addr = (u8_t *)aExtAddress->m8,
+		.ack_fpb.extended = true
+	};
+
+	if (radio_api->configure(radio_dev, IEEE802154_CONFIG_ACK_FPB,
+				 &config) != 0) {
+		return OT_ERROR_NO_BUFS;
+	}
 
 	return OT_ERROR_NONE;
 }
@@ -345,11 +441,29 @@ otError otPlatRadioClearSrcMatchExtEntry(otInstance *aInstance,
 void otPlatRadioClearSrcMatchShortEntries(otInstance *aInstance)
 {
 	ARG_UNUSED(aInstance);
+
+	struct ieee802154_config config = {
+		.ack_fpb.enabled = false,
+		.ack_fpb.addr = NULL,
+		.ack_fpb.extended = false
+	};
+
+	(void)radio_api->configure(radio_dev, IEEE802154_CONFIG_ACK_FPB,
+				   &config);
 }
 
 void otPlatRadioClearSrcMatchExtEntries(otInstance *aInstance)
 {
 	ARG_UNUSED(aInstance);
+
+	struct ieee802154_config config = {
+		.ack_fpb.enabled = false,
+		.ack_fpb.addr = NULL,
+		.ack_fpb.extended = true
+	};
+
+	(void)radio_api->configure(radio_dev, IEEE802154_CONFIG_ACK_FPB,
+				   &config);
 }
 
 int8_t otPlatRadioGetReceiveSensitivity(otInstance *aInstance)

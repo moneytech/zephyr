@@ -22,11 +22,11 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 #include <net/net_if.h>
 #include <net/net_pkt.h>
 
-#include <misc/byteorder.h>
+#include <sys/byteorder.h>
 #include <string.h>
 #include <random/rand32.h>
 
-#include <gpio.h>
+#include <drivers/gpio.h>
 
 #include <net/ieee802154_radio.h>
 
@@ -792,31 +792,23 @@ static inline void irqb_int_handler(struct device *port,
 	k_sem_give(&mcr20a->isr_sem);
 }
 
-static inline void set_reset(struct device *dev, u32_t value)
-{
-	struct mcr20a_context *mcr20a = dev->driver_data;
-
-	gpio_pin_write(mcr20a->reset_gpio,
-		       DT_NXP_MCR20A_0_RESET_GPIOS_PIN, value);
-}
-
 static void enable_irqb_interrupt(struct mcr20a_context *mcr20a,
 				 bool enable)
 {
-	if (enable) {
-		gpio_pin_enable_callback(mcr20a->irq_gpio,
-					 DT_NXP_MCR20A_0_IRQB_GPIOS_PIN);
-	} else {
-		gpio_pin_disable_callback(mcr20a->irq_gpio,
-					  DT_NXP_MCR20A_0_IRQB_GPIOS_PIN);
-	}
+	gpio_flags_t flags = enable
+		? GPIO_INT_EDGE_TO_ACTIVE
+		: GPIO_INT_DISABLE;
+
+	gpio_pin_interrupt_configure(mcr20a->irq_gpio,
+				     DT_INST_0_NXP_MCR20A_IRQB_GPIOS_PIN,
+				     flags);
 }
 
 static inline void setup_gpio_callbacks(struct mcr20a_context *mcr20a)
 {
 	gpio_init_callback(&mcr20a->irqb_cb,
 			   irqb_int_handler,
-			   BIT(DT_NXP_MCR20A_0_IRQB_GPIOS_PIN));
+			   BIT(DT_INST_0_NXP_MCR20A_IRQB_GPIOS_PIN));
 	gpio_add_callback(mcr20a->irq_gpio, &mcr20a->irqb_cb);
 }
 
@@ -1269,22 +1261,24 @@ static int power_on_and_setup(struct device *dev)
 {
 	struct mcr20a_context *mcr20a = dev->driver_data;
 	u8_t timeout = 6U;
-	u32_t status;
+	int pin;
 	u8_t tmp = 0U;
 
 	if (!PART_OF_KW2XD_SIP) {
-		set_reset(dev, 0);
+		gpio_pin_set(mcr20a->reset_gpio,
+			     DT_INST_0_NXP_MCR20A_RESET_GPIOS_PIN, 1);
 		z_usleep(150);
-		set_reset(dev, 1);
+		gpio_pin_set(mcr20a->reset_gpio,
+			     DT_INST_0_NXP_MCR20A_RESET_GPIOS_PIN, 0);
 
 		do {
 			z_usleep(50);
 			timeout--;
-			gpio_pin_read(mcr20a->irq_gpio,
-				      DT_NXP_MCR20A_0_IRQB_GPIOS_PIN, &status);
-		} while (status && timeout);
+			pin = gpio_pin_get(mcr20a->irq_gpio,
+					   DT_INST_0_NXP_MCR20A_IRQB_GPIOS_PIN);
+		} while (pin > 0 && timeout);
 
-		if (status) {
+		if (pin) {
 			LOG_ERR("Timeout, failed to get WAKE IRQ");
 			return -EIO;
 		}
@@ -1335,34 +1329,32 @@ static inline int configure_gpios(struct device *dev)
 
 	/* setup gpio for the modem interrupt */
 	mcr20a->irq_gpio =
-		device_get_binding(DT_NXP_MCR20A_0_IRQB_GPIOS_CONTROLLER);
+		device_get_binding(DT_INST_0_NXP_MCR20A_IRQB_GPIOS_CONTROLLER);
 	if (mcr20a->irq_gpio == NULL) {
 		LOG_ERR("Failed to get pointer to %s device",
-			DT_NXP_MCR20A_0_IRQB_GPIOS_CONTROLLER);
+			DT_INST_0_NXP_MCR20A_IRQB_GPIOS_CONTROLLER);
 		return -EINVAL;
 	}
 
 	gpio_pin_configure(mcr20a->irq_gpio,
-			   DT_NXP_MCR20A_0_IRQB_GPIOS_PIN,
-			   GPIO_DIR_IN | GPIO_INT | GPIO_INT_EDGE |
-			   GPIO_PUD_PULL_UP |
-			   GPIO_INT_ACTIVE_LOW);
+			   DT_INST_0_NXP_MCR20A_IRQB_GPIOS_PIN,
+			   GPIO_INPUT | DT_INST_0_NXP_MCR20A_IRQB_GPIOS_FLAGS);
 
 	if (!PART_OF_KW2XD_SIP) {
 		/* setup gpio for the modems reset */
 		mcr20a->reset_gpio =
 			device_get_binding(
-				DT_NXP_MCR20A_0_RESET_GPIOS_CONTROLLER);
+				DT_INST_0_NXP_MCR20A_RESET_GPIOS_CONTROLLER);
 		if (mcr20a->reset_gpio == NULL) {
 			LOG_ERR("Failed to get pointer to %s device",
-				DT_NXP_MCR20A_0_RESET_GPIOS_CONTROLLER);
+				DT_INST_0_NXP_MCR20A_RESET_GPIOS_CONTROLLER);
 			return -EINVAL;
 		}
 
 		gpio_pin_configure(mcr20a->reset_gpio,
-				   DT_NXP_MCR20A_0_RESET_GPIOS_PIN,
-				   GPIO_DIR_OUT);
-		set_reset(dev, 0);
+				   DT_INST_0_NXP_MCR20A_RESET_GPIOS_PIN,
+				   GPIO_OUTPUT_ACTIVE |
+				   DT_INST_0_NXP_MCR20A_RESET_GPIOS_FLAGS);
 	}
 
 	return 0;
@@ -1372,37 +1364,37 @@ static inline int configure_spi(struct device *dev)
 {
 	struct mcr20a_context *mcr20a = dev->driver_data;
 
-	mcr20a->spi = device_get_binding(DT_NXP_MCR20A_0_BUS_NAME);
+	mcr20a->spi = device_get_binding(DT_INST_0_NXP_MCR20A_BUS_NAME);
 	if (!mcr20a->spi) {
 		LOG_ERR("Unable to get SPI device");
 		return -ENODEV;
 	}
 
-#if defined(DT_NXP_MCR20A_0_CS_GPIO_CONTROLLER)
+#if defined(DT_NXP_MCR20A_0_CS_GPIOS_CONTROLLER)
 	mcr20a->cs_ctrl.gpio_dev = device_get_binding(
-		DT_NXP_MCR20A_0_CS_GPIO_CONTROLLER);
+		DT_NXP_MCR20A_0_CS_GPIOS_CONTROLLER);
 	if (!mcr20a->cs_ctrl.gpio_dev) {
 		LOG_ERR("Unable to get GPIO SPI CS device");
 		return -ENODEV;
 	}
 
-	mcr20a->cs_ctrl.gpio_pin = DT_NXP_MCR20A_0_CS_GPIO_PIN;
+	mcr20a->cs_ctrl.gpio_pin = DT_NXP_MCR20A_0_CS_GPIOS_PIN;
 	mcr20a->cs_ctrl.delay = 0U;
 
 	mcr20a->spi_cfg.cs = &mcr20a->cs_ctrl;
 
 	LOG_DBG("SPI GPIO CS configured on %s:%u",
-		DT_NXP_MCR20A_0_CS_GPIO_CONTROLLER,
-		DT_NXP_MCR20A_0_CS_GPIO_PIN);
-#endif /* DT_NXP_MCR20A_0_CS_GPIO_CONTROLLER */
+		DT_NXP_MCR20A_0_CS_GPIOS_CONTROLLER,
+		DT_NXP_MCR20A_0_CS_GPIOS_PIN);
+#endif /* DT_NXP_MCR20A_0_CS_GPIOS_CONTROLLER */
 
-	mcr20a->spi_cfg.frequency = DT_NXP_MCR20A_0_SPI_MAX_FREQUENCY;
+	mcr20a->spi_cfg.frequency = DT_INST_0_NXP_MCR20A_SPI_MAX_FREQUENCY;
 	mcr20a->spi_cfg.operation = SPI_WORD_SET(8);
-	mcr20a->spi_cfg.slave = DT_NXP_MCR20A_0_BASE_ADDRESS;
+	mcr20a->spi_cfg.slave = DT_INST_0_NXP_MCR20A_BASE_ADDRESS;
 
 	LOG_DBG("SPI configured %s, %d",
-		DT_NXP_MCR20A_0_BUS_NAME,
-		DT_NXP_MCR20A_0_BASE_ADDRESS);
+		DT_INST_0_NXP_MCR20A_BUS_NAME,
+		DT_INST_0_NXP_MCR20A_BASE_ADDRESS);
 
 	return 0;
 }
@@ -1436,7 +1428,7 @@ static int mcr20a_init(struct device *dev)
 	k_thread_create(&mcr20a->mcr20a_rx_thread, mcr20a->mcr20a_rx_stack,
 			CONFIG_IEEE802154_MCR20A_RX_STACK_SIZE,
 			(k_thread_entry_t)mcr20a_thread_main,
-			dev, NULL, NULL, K_PRIO_COOP(2), 0, 0);
+			dev, NULL, NULL, K_PRIO_COOP(2), 0, K_NO_WAIT);
 
 	return 0;
 }

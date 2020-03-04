@@ -64,7 +64,7 @@ void __attribute__((section(".iram1"))) __start(void)
 
 	/* Initialize the architecture CPU pointer.  Some of the
 	 * initialization code wants a valid _current before
-	 * kernel_arch_init() is invoked.
+	 * arch_kernel_init() is invoked.
 	 */
 	__asm__ volatile("wsr.MISC0 %0; rsync" : : "r"(&_kernel.cpus[0]));
 
@@ -75,8 +75,8 @@ void __attribute__((section(".iram1"))) __start(void)
 	CODE_UNREACHABLE;
 }
 
-/* Boot-time static default printk handler, possibly to be overriden later. */
-int z_arch_printk_char_out(int c)
+/* Boot-time static default printk handler, possibly to be overridden later. */
+int arch_printk_char_out(int c)
 {
 	if (c == '\n') {
 		esp32_rom_uart_tx_one_char('\r');

@@ -1,10 +1,7 @@
-# Kconfig.backends - Shell badckends configuration options
+# Shell badckends configuration options
 
-#
 # Copyright (c) 2018 Nordic Semiconductor ASA
-#
 # SPDX-License-Identifier: Apache-2.0
-#
 
 menuconfig SHELL_BACKENDS
 	bool "Enable shell backends"
@@ -15,18 +12,27 @@ menuconfig SHELL_BACKENDS
 if SHELL_BACKENDS
 
 config SHELL_BACKEND_SERIAL
-	bool "Enable serial backends."
+	bool "Enable serial backend"
 	default y
 	select SERIAL
 	select RING_BUFFER
 	help
-	  Enable serial backends.
+	  Enable serial backend.
 
 if SHELL_BACKEND_SERIAL
 
+config SHELL_PROMPT_UART
+	string "Displayed prompt name"
+	default "uart:~$ "
+	help
+	  Displayed prompt name for UART backend.
+
+# Workaround for not being able to have commas in macro arguments
+DT_CHOSEN_Z_SHELL_UART := zephyr,shell-uart
+
 config UART_SHELL_ON_DEV_NAME
 	string "Device Name of UART Device for SHELL_BACKEND_SERIAL"
-	default "$(dt_str_val,DT_UART_SHELL_ON_DEV_NAME)" if HAS_DTS
+	default "$(dt_chosen_label,$(DT_CHOSEN_Z_SHELL_UART))" if HAS_DTS
 	default "UART_0"
 	help
 	  This option specifies the name of UART device to be used for the
@@ -104,16 +110,23 @@ config SHELL_BACKEND_SERIAL_LOG_LEVEL
 	default 4 if SHELL_BACKEND_SERIAL_LOG_LEVEL_DBG
 	default 5 if SHELL_BACKEND_SERIAL_LOG_LEVEL_DEFAULT
 
-endif #SHELL_BACKEND_SERIAL
+endif # SHELL_BACKEND_SERIAL
 
 config SHELL_BACKEND_RTT
-	bool "Enable RTT backend."
-	select USE_SEGGER_RTT
+	bool "Enable RTT backend"
+	select CONSOLE
 	select RTT_CONSOLE
+	depends on USE_SEGGER_RTT
 	help
 	  Enable RTT backend.
 
 if SHELL_BACKEND_RTT
+
+config SHELL_PROMPT_RTT
+	string "Displayed prompt name"
+	default "rtt:~$ "
+	help
+	  Displayed prompt name for RTT backend.
 
 config SHELL_RTT_RX_POLL_PERIOD
 	int "RX polling period (in milliseconds)"
@@ -165,7 +178,7 @@ module = SHELL_RTT
 module-str = RTT shell backend
 source "subsys/logging/Kconfig.template.log_config"
 
-endif #SHELL_BACKEND_RTT
+endif # SHELL_BACKEND_RTT
 
 config SHELL_BACKEND_TELNET
 	bool "Enable TELNET backend."
@@ -175,6 +188,12 @@ config SHELL_BACKEND_TELNET
 	  Enable TELNET backend.
 
 if SHELL_BACKEND_TELNET
+
+config SHELL_PROMPT_TELNET
+	string "Displayed prompt name"
+	default "~$ "
+	help
+	  Displayed prompt name for TELNET backend.
 
 config SHELL_TELNET_PORT
 	int "Telnet port number"
@@ -260,5 +279,12 @@ config SHELL_BACKEND_DUMMY
 	help
 	  Enable dummy backend which can be used to execute commands with no
 	  need for physical transport interface.
+
+config SHELL_PROMPT_DUMMY
+	string "Displayed prompt name"
+	depends on SHELL_BACKEND_DUMMY
+	default "~$ "
+	help
+	  Displayed prompt name for DUMMY backend.
 
 endif # SHELL_BACKENDS

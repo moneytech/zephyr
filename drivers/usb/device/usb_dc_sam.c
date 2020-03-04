@@ -372,12 +372,11 @@ int usb_dc_set_address(u8_t addr)
 }
 
 /* Set USB device controller status callback */
-int usb_dc_set_status_callback(const usb_dc_status_callback cb)
+void usb_dc_set_status_callback(const usb_dc_status_callback cb)
 {
-	dev_data.status_cb = cb;
 	LOG_DBG("");
 
-	return 0;
+	dev_data.status_cb = cb;
 }
 
 /* Check endpoint capabilities */
@@ -566,6 +565,10 @@ int usb_dc_ep_is_stalled(u8_t ep, u8_t *stalled)
 
 	if (ep_idx >= DT_USBHS_NUM_BIDIR_EP) {
 		LOG_ERR("wrong endpoint index/address");
+		return -EINVAL;
+	}
+
+	if (!stalled) {
 		return -EINVAL;
 	}
 

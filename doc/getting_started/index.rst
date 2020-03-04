@@ -3,401 +3,463 @@
 Getting Started Guide
 #####################
 
-Follow this guide to set up a :ref:`Zephyr <introducing_zephyr>` development
-environment on your system, and then build and run a sample application.
+Follow this guide to get a quick start with Zephyr development where
+you'll:
+
+- **Set up a command-line development environment** for Linux* (Ubuntu),
+  macOS, or Windows, with required package manager, compiler, and
+  build-system tools,
+- **Get the sources**,
+- **Build, flash, and run** a sample application on your target board.
+
+\*Instructions for other Linux distributions are discussed in the
+:ref:`advanced Linux setup document <installation_linux>`.
 
 .. _host_setup:
 
-Set Up a Development System
-***************************
+.. rst-class:: numbered-step
 
-Follow one of the following guides for your host operating system.
+Select and Update OS
+********************
 
-.. toctree::
-   :maxdepth: 1
+Zephyr development depends on an up-to-date host system and common build system
+tools. First, make sure your development system OS is updated:
 
-   Linux <installation_linux.rst>
-   macOS <installation_mac.rst>
-   Windows <installation_win.rst>
+.. tabs::
+
+   .. group-tab:: Ubuntu
+
+      This guide covers Ubuntu version 18.04 LTS and later. See
+      :ref:`installation_linux` for information about other Linux
+      distributions and older versions of Ubuntu.
+
+      Use these commands to bring your Ubuntu system up to date:
+
+      .. code-block:: bash
+
+         sudo apt update
+         sudo apt upgrade
+
+   .. group-tab:: macOS
+
+      On macOS Mojave, you can manually check for updates by choosing
+      System Preferences from the Apple menu, then clicking Software Update (and
+      click Update Now if there are). For other macOS versions, see the
+      `Update macOS topic in Apple support
+      <https://support.apple.com/en-us/HT201541>`_.
+
+   .. group-tab:: Windows
+
+      On Windows, you can manually check for updates by selecting Start  > Settings  >
+      Update & Security  > Windows Update, and then select Check for updates.
+      If updates are available, install them.
+
+.. _install-required-tools:
+
+.. rst-class:: numbered-step
+
+Install dependencies
+********************
+
+Next, use a package manager to install required support tools. Python 3
+and its package manager, pip, are used extensively by Zephyr for
+installing and running scripts used to compile, build, and run Zephyr
+applications.
+
+We'll also install Zephyr's multi-purpose west tool.
+
+.. tabs::
+
+   .. group-tab:: Ubuntu
+
+      #. Use the ``apt`` package manager to install these tools:
+
+         .. code-block:: bash
+
+            sudo apt install --no-install-recommends git cmake ninja-build gperf \
+              ccache dfu-util device-tree-compiler wget \
+              python3-pip python3-setuptools python3-tk python3-wheel xz-utils file \
+              make gcc gcc-multilib g++-multilib libsdl2-dev
+
+      #. Verify the version of cmake installed on your system using::
+
+            cmake --version
+
+         If it's not version 3.13.1 or higher, follow these steps to
+         add the `kitware third-party apt repository <https://apt.kitware.com/>`__
+         to get an updated version of cmake.
+
+         a) Add the kitware signing key to apt:
+
+            .. code-block:: bash
+
+               wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | sudo apt-key add -
+
+         b) Add the kitware repo corresponding to the Ubuntu 18.04 LTS release:
+
+            .. code-block:: bash
+
+               sudo apt-add-repository 'deb https://apt.kitware.com/ubuntu/ bionic main'
+
+         c) Then install the updated cmake using the usual apt commands:
+
+            .. code-block:: bash
+
+               sudo apt update
+               sudo apt install cmake
+
+      #. Install west:
+
+         .. code-block:: bash
+
+            pip3 install --user -U west
+            echo 'export PATH=~/.local/bin:"$PATH"' >> ~/.bashrc
+            source ~/.bashrc
+
+         The pip3 ``--user`` option puts installed Python packages into your
+         ``~/.local/bin folder`` so we'll need to add this to the PATH
+         so these packages will be found.  Adding the PATH specification to your
+         ``.bashrc`` file ensures this setting is permanent.
+
+   .. group-tab:: macOS
+
+      #. On macOS, install :program:`Homebrew` by following instructions on the `Homebrew
+         site`_, and as shown here. Homebrew is a free and open-source package management system that
+         simplifies installing software on macOS.  While installing Homebrew,
+         you may be prompted to install additional missing dependencies; please follow
+         any such instructions as well.
+
+         .. code-block:: bash
+
+            /usr/bin/ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install)"
+
+      #. Then, install these host dependencies with the ``brew`` command:
+
+         .. code-block:: bash
+
+            brew install cmake ninja gperf ccache dfu-util qemu dtc python3
+
+      #. Install west:
+
+         .. code-block:: bash
+
+            pip3 install west
+
+      .. _Homebrew site: https://brew.sh/
+
+   .. group-tab:: Windows
+
+      .. note:: Currently, the built-in `Windows Subsystem for Linux (WSL)
+         <https://msdn.microsoft.com/en-us/commandline/wsl/install_guide>`__
+         doesn't support flashing your application to the board.  As such,
+         we don't recommend using WSL yet.
+
+      These instructions assume you are using the Windows ``cmd.exe``
+      command prompt. Some of the details, such as setting environment
+      variables, may differ if you are using PowerShell.
+
+      An easy way to install native Windows dependencies is to first install
+      `Chocolatey`_, a package manager for Windows.  If you prefer to install
+      dependencies manually, you can also download the required programs from their
+      respective websites and verify they can be found on your PATH.
+
+      |p|
+
+      #. Install :program:`Chocolatey` by following the instructions on the
+         `Chocolatey install`_ page.
+
+      #. Open a command prompt (``cmd.exe``) as an **Administrator** (press the
+         Windows key, type "cmd.exe" in the prompt, then right-click the result and
+         choose "Run as Administrator").
+
+      #. Disable global confirmation to avoid having to confirm
+         installation of individual programs:
+
+         .. code-block:: console
+
+            choco feature enable -n allowGlobalConfirmation
+
+      #. Install CMake:
+
+         .. code-block:: console
+
+            choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System'
+
+      #. Install the rest of the tools:
+
+         .. code-block:: console
+
+            choco install git python ninja dtc-msys2 gperf
+
+      #. Close the Administrator command prompt window and open a
+         regular command prompt window to continue..
+
+      #. Install west:
+
+         .. code-block:: bash
+
+            pip3 install west
+
+
+.. _Chocolatey: https://chocolatey.org/
+.. _Chocolatey install: https://chocolatey.org/install
 
 .. _get_the_code:
+.. _clone-zephyr:
+
+.. rst-class:: numbered-step
 
 Get the source code
 *******************
 
-Zephyr's multi-purpose :ref:`west` tool lets you easily get the Zephyr project
-source code, instead of manually cloning the Zephyr repos along with west
-itself.
+Zephyr's multi-purpose west tool simplifies getting the Zephyr
+project git repositories and external modules used by Zephyr.
+Clone all of Zephyr's git repositories in a new :file:`zephyrproject`
+directory using west:
 
-.. warning::
+.. tabs::
 
-   It's possible to use Zephyr without installing west, but you have
-   to **really** know :ref:`what you are doing <no-west>`.
+   .. group-tab:: Ubuntu
 
-Bootstrap west
-==============
+      .. code-block:: bash
 
-First, install the ``west`` binary and bootstrapper:
+         cd ~
+         west init zephyrproject
+         cd zephyrproject
+         west update
 
-.. code-block:: console
+   .. group-tab:: macOS
 
-   # Linux
-   pip3 install --user west
+      .. code-block:: bash
 
-   # macOS and Windows
-   pip3 install west
+         cd ~
+         west init zephyrproject
+         cd zephyrproject
+         west update
 
-.. note::
-   See :ref:`gs_python_deps` for additional clarfication on using the
-   ``--user`` switch.
+   .. group-tab:: Windows
 
-Clone the Zephyr Repositories
-=============================
+      .. code-block:: bat
 
-.. warning::
-   If you have run ``source zephyr-env.sh`` (on Linux or macOS) or
-   ``zephyr-env.cmd`` (on Windows) on a clone of zephyr that predates the
-   introduction of west, then the copy of west included in the clone will
-   override the bootstrapper installed with ``pip``. In that case close the
-   shell and open a new one in order to remove it from the ``PATH``. You
-   can check which ``west`` is being executed by running::
+         cd %HOMEPATH%
+         west init zephyrproject
+         cd zephyrproject
+         west update
 
-      west --version
+.. _install_py_requirements:
 
-   You should see ``West bootstrapper version: v0.5.0`` (or higher).
+.. rst-class:: numbered-step
 
-Next, clone the Zephyr source code repositories from GitHub using the
-``west`` tool you just installed:
+Install needed Python packages
+******************************
 
-.. code-block:: console
+The Zephyr source folders we downloaded contain a ``requirements.txt`` file
+that we'll use to install additional Python tools used by the Zephyr
+project:
 
-   west init zephyrproject
-   cd zephyrproject
-   west update
+.. tabs::
 
-.. note::
-   You can replace :file:`zephyrproject` with the folder name of your choice.
-   West will create the named folder if it doesn't already exist.
-   If no folder name is specified, west initializes the current
-   working directory.
+   .. group-tab:: Ubuntu
 
-.. note::
-   If you had previously cloned the zephyr repository manually using Git,
-   create an empty enclosing folder (for example :file:`zephyrproject/`),
-   and move the cloned repository into it. From the enclosing folder run::
+      .. code-block:: bash
 
-      west init -l zephyr/
-      west update
+         pip3 install --user -r ~/zephyrproject/zephyr/scripts/requirements.txt
 
-   The ``-l <path to zephyr>`` parameter instructs ``west`` to use an existing
-   local copy instead of cloning a remote repository. This will create a full
-   Zephyr installation (see below).
+   .. group-tab:: macOS
 
-Running ``west init`` will clone west itself into ``./.west/west`` and
-initialize a local installation. Running ``west update`` will pull all the
-projects referenced by the manifest file (:file:`zephyr/west.yml`) into the
-folders specified in it. See :ref:`west-multi-repo` for additional details, a
-list of the folders and files that west will create as part of the process,
-and more on how ``west`` helps manage multiple repositories.
+      .. code-block:: bash
 
-.. warning::
+         pip3 install -r ~/zephyrproject/zephyr/scripts/requirements.txt
 
-   Don't clone Zephyr to a directory with spaces anywhere in the path.
-   For example, on Windows, :file:`C:\\Users\\YourName\\zephyrproject` will
-   work, but :file:`C:\\Users\\Your Name\\zephyrproject` will cause cryptic
-   errors when you try to build an application.
+   .. group-tab:: Windows
+
+      .. code-block:: bat
+
+         pip3 install -r %HOMEPATH%\zephyrproject\zephyr\scripts\requirements.txt
 
 .. _gs_python_deps:
 
-Install Python Dependencies
-***************************
+.. rst-class:: numbered-step
 
-Next, install additional Python packages required by Zephyr in a shell or
-``cmd.exe`` prompt:
+Install Software Development Toolchain
+**************************************
 
-.. code-block:: console
-
-   # Linux
-   pip3 install --user -r zephyr/scripts/requirements.txt
-
-   # macOS and Windows
-   pip3 install -r zephyr/scripts/requirements.txt
-
-Some notes on pip's ``--user`` option:
-
-- Installing with ``--user`` is the default behavior on Debian-based
-  distributions and is generally recommended on Linux to avoid conflicts with
-  Python packages installed using the system package manager.
-
-- On Linux, verify the Python user install directory ``~/.local/bin`` is at the front of
-  your PATH environment variable, otherwise installed packages won't be
-  found.
-
-- On macOS, Homebrew disables the ``--user`` flag\ [#homebrew_user]_.
-
-- On Windows using ``cmd.exe``, although it's possible to use the ``--user``
-  flag, it makes it harder for the command prompt to find executables installed
-  by pip.
+A toolchain includes necessary tools used to build Zephyr applications
+including: compiler, assembler, linker, and their dependencies.
 
 
-Set Up a Toolchain
-******************
+.. _Zephyr SDK Downloads: https://github.com/zephyrproject-rtos/sdk-ng/releases
 
-.. note::
+.. tabs::
 
-   On Linux, you can skip this step if you installed the :ref:`Zephyr SDK
-   <zephyr_sdk>`, which includes toolchains for all supported Zephyr
-   architectures.
+   .. group-tab:: Ubuntu
 
-   In some specific configurations like non-MCU x86 targets on Linux,
-   you may be able to re-use the native development tools provided by
-   your operating system instead of an SDK by setting
-   ``ZEPHYR_TOOLCHAIN_VARIANT=host``.
+      Zephyr's Software Development Kit (SDK) contains necessary Linux
+      development tools to build Zephyr on all supported architectures.
+      Additionally, it includes host tools such as custom QEMU binaries and a
+      host compiler.
 
-   If you want, you can use the SDK host tools (such as OpenOCD) with a
-   different toolchain by keeping the :envvar:`ZEPHYR_SDK_INSTALL_DIR`
-   environment variable set to the Zephyr SDK installation directory, while
-   setting :envvar:`ZEPHYR_TOOLCHAIN_VARIANT` appropriately for a non-SDK
-   toolchain.
+      |p|
 
-Zephyr binaries are compiled using software called a *toolchain*. You need to
-*install* and *configure* a toolchain to develop Zephyr applications\
-[#tools_native_posix]_.
+      #. Download the latest SDK as a self-extracting installation binary:
 
-Toolchains can be *installed* in different ways, including using installer
-programs, system package managers, or simply downloading a zip file or other
-archive and extracting the files somewhere on your computer.  You *configure*
-the toolchain by setting the environment variable
-:envvar:`ZEPHYR_TOOLCHAIN_VARIANT` to a recognized value, along with some
-additional variable(s) specific to that toolchain (usually, this is just one
-more variable which contains the path where you installed the toolchain on your
-file system).
+         .. code-block:: bash
 
-.. note::
+            cd ~
+            wget https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v0.11.2/zephyr-sdk-0.11.2-setup.run
 
-   In previous releases of Zephyr, the ``ZEPHYR_TOOLCHAIN_VARIANT`` variable
-   was called ``ZEPHYR_GCC_VARIANT``.
+      #. Run the installation binary, installing the SDK in your home
+         folder :file:`~/zephyr-sdk-0.11.2`:
 
-The following toolchain installation options are available. The right choice
-for you depends on where you want to run Zephyr and any other requirements you
-may have. Check your :ref:`board-level documentation <boards>` if you are
-unsure about what choice to use.
+         .. code-block:: bash
 
-.. toctree::
-   :maxdepth: 2
+            chmod +x zephyr-sdk-0.11.2-setup.run
+            ./zephyr-sdk-0.11.2-setup.run -- -d ~/zephyr-sdk-0.11.2
 
-   toolchain_3rd_party_x_compilers.rst
-   toolchain_other_x_compilers.rst
-   toolchain_custom_cmake.rst
+      #. Set environment variables to let the build system know where to
+         find the toolchain programs:
 
+         .. code-block:: bash
 
-To use the same toolchain in new sessions in the future you can make
-sure the variables are set persistently.
+            export ZEPHYR_TOOLCHAIN_VARIANT=zephyr
+            export ZEPHYR_SDK_INSTALL_DIR=~/zephyr-sdk-0.11.2
 
-On macOS and Linux, you can set the variables by putting the ``export`` lines
-setting environment variables in a file :file:`~/.zephyrrc`. On Windows, you
-can put the ``set`` lines in :file:`%userprofile%\\zephyrrc.cmd`. These files
-are used to modify your environment when you run ``zephyr-env.sh`` (Linux,
-macOS) and ``zephyr-env.cmd`` (Windows), which you will learn about in the next
-step.
+      The SDK contains a udev rules file that provides information
+      needed to identify boards and grant hardware access permission to flash
+      tools.  Install these udev rules with these commands:
+
+      .. code-block:: bash
+
+         sudo cp ${ZEPHYR_SDK_INSTALL_DIR}/sysroots/x86_64-pokysdk-linux/usr/share/openocd/contrib/60-openocd.rules /etc/udev/rules.d
+         sudo udevadm control --reload
+
+   .. group-tab:: macOS
+
+      #. The Zephyr SDK is not supported on macOS.  See instructions for
+         :ref:`installing 3rd-party toolchains<gs_toolchain>`.
+
+      #. Do not forget to set environment variables (ZEPHYR_TOOLCHAIN_VARIANT and toolchain specific ones)
+         to let the build system know where to find the toolchain programs.
+
+   .. group-tab:: Windows
+
+      #. The Zephyr SDK is not supported on Windows.  See instructions for
+         :ref:`installing 3rd-party toolchains<gs_toolchain>`.
+
+      #. Do not forget to set environment variables (ZEPHYR_TOOLCHAIN_VARIANT and toolchain specific ones)
+         to let the build system know where to find the toolchain programs.
+
 
 .. _getting_started_run_sample:
 
-Build and Run an Application
+.. rst-class:: numbered-step
+
+Build the Blinky Application
 ****************************
 
-Next, build a sample Zephyr application. You can then flash and run it on real
-hardware using any supported host system. Depending on your operating system,
-you can also run it in emulation with QEMU or as a native POSIX application.
+The sample :ref:`blinky-sample` blinks an LED on the target board.  By
+building and running it, we can verify that the environment and tools
+are properly set up for Zephyr development.
 
-.. _getting_started_cmake:
+   .. note:: This sample is compatible with most boards supported by
+      Zephyr, but not all of them. See the :ref:`blinky sample requirements
+      <blinky-sample-requirements>` for more information. If this sample is not
+      compatible with your board, a good alternative to try is the
+      :ref:`Hello World sample <hello_world>`.
 
-A Brief Note on the Zephyr Build System
-=======================================
+#. Set build environment variables:
 
-The Zephyr build system uses `CMake`_. CMake creates build systems in different
-formats, called `generators`_. Zephyr supports the following generators:
+   .. tabs::
 
- * ``Unix Makefiles``: Supported on UNIX-like platforms (Linux, macOS).
- * ``Ninja``: Supported on all platforms.
+      .. group-tab:: Ubuntu
 
-This documentation and Zephyr's continuous integration system mainly use
-``Ninja``, but you should be able to use any supported generator to build
-Zephyr applications, both when using ``cmake`` directly or ``west``.
+         .. code-block:: bash
 
-Build the Application
-=====================
+            cd ~/zephyrproject/zephyr
+            source zephyr-env.sh
 
-Follow these steps to build the :ref:`hello_world` sample application provided
-with Zephyr.
+      .. group-tab:: macOS
 
-As mentioned earlier, Zephyr's build system is based on
-:ref:`CMake <application>`. You can build an application either by using
-``cmake`` directly or by using :ref:`west <west>`, Zephyr's meta-tool that is
-also used to :ref:`manage the repositories <west-multi-repo>`. You can find
-additional information about west's build capabilities in
-:ref:`west-build-flash-debug`.
+         .. code-block:: bash
 
-Zephyr applications have to be configured and built to run on some hardware
-configuration, which is called a "board"\ [#board_misnomer]_. These steps show
-how to build the Hello World application for the :ref:`reel_board` board.  You
-can build for a different board by changing ``reel_board`` to another
-supported value. See :ref:`boards` for more information, or use the ``usage``
-build target from an initialized build directory to get a list.
+            cd ~/zephyrproject/zephyr
+            source zephyr-env.sh
 
-.. note::
+      .. group-tab:: Windows
 
-   If you want to re-use your existing build directory to build for another
-   board, you must delete that directory's contents first by using the
-   ``pristine`` build target.
+         .. code-block:: bat
 
-#. Navigate to the main project directory:
+            cd %HOMEPATH%/zephyrproject/zephyr
+            zephyr-env.cmd
 
-   .. code-block:: console
+#. Build the blinky sample. Specify **your board name**
+   (see :ref:`boards`) in the command below:
 
-      cd zephyrproject/zephyr
+   .. code-block:: bash
 
-#. Set up your build environment:
+      west build -p auto -b <your-board-name> samples/basic/blinky
 
-   .. code-block:: console
+   This west command uses the ``-p auto`` parameter to automatically
+   clean out any byproducts from a previous build if needed, useful if
+   you try building another sample.
 
-      # On Linux/macOS
-      source zephyr-env.sh
-      # On Windows
-      zephyr-env.cmd
+.. rst-class:: numbered-step
 
-#. Build the Hello World sample for the ``reel_board``:
+Flash and Run the Application
+*****************************
 
-   .. Note: we don't use :zephyr-app: here because we just told the user to cd
-      to ZEPHYR_BASE, so it's not necessary for clarity and would clutter the
-      instructions a bit.
+#. Connect a USB cable between the board and your development computer.
+   (Refer to the specific :ref:`boards` documentation if you're not sure
+   which connector to use on the board.)
+#. If there's a switch, turn the board on.
+#. Flash the blinky application you just built using the command:
 
-   .. zephyr-app-commands::
-      :tool: all
-      :app: samples/hello_world
-      :board: reel_board
-      :goals: build
+   .. tabs::
 
-   On Linux/macOS you can also use ``cmake`` to build with ``make`` instead
-   of ``ninja``:
+      .. group-tab:: Ubuntu
 
-   .. zephyr-app-commands::
-      :tool: cmake
-      :app: samples/hello_world
-      :generator: make
-      :host-os: unix
-      :board: reel_board
-      :goals: build
+         .. code-block:: bash
 
-The main build products are in :file:`samples/hello_world/build/zephyr`.
-The final application binary in ELF format is named :file:`zephyr.elf` by
-default. Other binary formats and byproducts such as disassembly and map files
-will be present depending on the target and build system configuration.
+            west flash
 
-Other sample projects demonstrating Zephyr's features are located in
-:zephyr_file:`samples` and are documented in :ref:`samples-and-demos`.
+         If the flash command fails, and you've checked your
+         board is powered on and connected to the right on-board USB connector,
+         verify you've granted needed access permission by
+         :ref:`setting-udev-rules`.
 
-Run the Application by Flashing to a Board
-==========================================
+      .. group-tab:: macOS
 
-Most "real hardware" boards supported by Zephyr can be flashed by running
-``west flash`` or ``ninja flash`` from the build directory. However, this may
-require board-specific tool installation and configuration to work properly.
+         .. code-block:: bash
 
-See :ref:`application_run` in the Application Development Primer and the
-documentation provided with your board at :ref:`boards` for additional details
-if you get an error.
+            west flash
 
-Run the Application in QEMU
-===========================
+      .. group-tab:: Windows
 
-On Linux and macOS, you can run Zephyr applications in emulation on your host
-system using QEMU when targeting either the X86 or ARM Cortex-M3 architectures.
+         .. code-block:: bat
 
-To build and run Hello World using the x86 emulation board configuration
-(``qemu_x86``), type:
+            west flash
 
-.. zephyr-app-commands::
-   :tool: all
-   :zephyr-app: samples/hello_world
-   :host-os: unix
-   :board: qemu_x86
-   :goals: build run
 
-To exit, type :kbd:`Ctrl-a`, then :kbd:`x`.
+The application will start running and you'll see blinky in action. The
+actual blinking LED location is board specific.
 
-Use the ``qemu_cortex_m3`` board configuration to run on an emulated Arm
-Cortex-M3.
+.. figure:: img/ReelBoard-Blinky.gif
+   :width: 400px
+   :name: reelboard-blinky
 
-Run a Sample Application natively (POSIX OS)
-============================================
+   Phytec reel_board running blinky
 
-Finally, it is also possible to compile some samples to run as native processes
-on a POSIX OS. This is currently only tested on Linux hosts.
 
-On 64 bit host operating systems, you will also need a 32 bit C library
-installed. See the :ref:`native_posix` section on host dependencies for more
-information.
+Next Steps
+**********
 
-To compile and run Hello World in this way, type:
+Now that you've got the blinky sample running, here are some next steps
+for exploring Zephyr:
 
-.. zephyr-app-commands::
-   :tool: all
-   :zephyr-app: samples/hello_world
-   :host-os: unix
-   :board: native_posix
-   :goals: build
-
-and then:
-
-.. code-block:: console
-
-   # With west
-   west build -t run
-
-   # With ninja
-   ninja run
-
-   # or just:
-   zephyr/zephyr.exe
-   # Press Ctrl+C to exit
-
-You can run ``zephyr/zephyr.exe --help`` to get a list of available
-options.  See the :ref:`native_posix` document for more information.
-
-This executable can be instrumented using standard tools, such as gdb or
-valgrind.
-
-.. rubric:: Footnotes
-
-.. [#homebrew_user]
-
-   For details, see
-   https://docs.brew.sh/Homebrew-and-Python#note-on-pip-install---user.
-
-.. [#tools_native_posix]
-
-   Usually, the toolchain is a cross-compiler and related tools which are
-   different than the host compilers and other programs available for
-   developing software to run natively on your operating system.
-
-   One exception is when building Zephyr as a host binary to run on a POSIX
-   operating system. In this case, you still need to set up a toolchain, but it
-   will provide host compilers instead of cross compilers. For details on this
-   option, see :ref:`native_posix`.
-
-.. [#board_misnomer]
-
-   This has become something of a misnomer over time. While the target can be,
-   and often is, a microprocessor running on its own dedicated hardware
-   board, Zephyr also supports using QEMU to run targets built for other
-   architectures in emulation, targets which produce native host system
-   binaries that implement Zephyr's driver interfaces with POSIX APIs, and even
-   running different Zephyr-based binaries on CPU cores of differing
-   architectures on the same physical chip. Each of these hardware
-   configurations is called a "board," even though that doesn't always make
-   perfect sense in context.
-
-.. _Manifest repository: https://github.com/zephyrproject-rtos/manifest
-.. _CMake: https://cmake.org
-.. _generators: https://cmake.org/cmake/help/v3.8/manual/cmake-generators.7.html
+* Try some other :ref:`samples-and-demos` that demonstrate Zephyr
+  capabilities.
+* Learn about :ref:`application` and more details about :ref:`west`.
+* Check out :ref:`beyond-GSG` for information about advanced setup
+  alternatives and issues.
+* Discover :ref:`project-resources` for getting help from the Zephyr
+  community.

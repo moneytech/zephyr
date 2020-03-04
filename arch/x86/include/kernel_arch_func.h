@@ -1,136 +1,125 @@
 /*
- * Copyright (c) 2016 Wind River Systems, Inc.
- * Copyright (c) 2018 Intel Corporation
- *
+ * Copyright (c) 2019 Intel Corporation
  * SPDX-License-Identifier: Apache-2.0
  */
-
-/* this file is only meant to be included by kernel_structs.h */
 
 #ifndef ZEPHYR_ARCH_X86_INCLUDE_KERNEL_ARCH_FUNC_H_
 #define ZEPHYR_ARCH_X86_INCLUDE_KERNEL_ARCH_FUNC_H_
 
-#ifndef _ASMLANGUAGE
+#include <kernel_arch_data.h>
+#include <arch/x86/mmustructs.h>
 
-#ifdef __cplusplus
-extern "C" {
+#ifdef CONFIG_X86_64
+#include <intel64/kernel_arch_func.h>
+#else
+#include <ia32/kernel_arch_func.h>
 #endif
 
-/* stack alignment related macros: STACK_ALIGN_SIZE is defined above */
+#ifndef _ASMLANGUAGE
+static inline bool arch_is_in_isr(void)
+{
+#ifdef CONFIG_SMP
+	/* On SMP, there is a race vs. the current CPU changing if we
+	 * are preempted.  Need to mask interrupts while inspecting
+	 * (note deliberate lack of gcc size suffix on the
+	 * instructions, we need to work with both architectures here)
+	 */
+	bool ret;
 
-#define STACK_ROUND_UP(x) ROUND_UP(x, STACK_ALIGN_SIZE)
-#define STACK_ROUND_DOWN(x) ROUND_DOWN(x, STACK_ALIGN_SIZE)
+	__asm__ volatile ("pushf; cli");
+	ret = arch_curr_cpu()->nested != 0;
+	__asm__ volatile ("popf");
+	return ret;
+#else
+	return _kernel.nested != 0U;
+#endif
+}
+
+/* stack alignment related macros: STACK_ALIGN is defined in arch.h */
+#define STACK_ROUND_UP(x) ROUND_UP(x, STACK_ALIGN)
+#define STACK_ROUND_DOWN(x) ROUND_DOWN(x, STACK_ALIGN)
 
 extern K_THREAD_STACK_DEFINE(_interrupt_stack, CONFIG_ISR_STACK_SIZE);
+extern K_THREAD_STACK_DEFINE(_interrupt_stack1, CONFIG_ISR_STACK_SIZE);
+extern K_THREAD_STACK_DEFINE(_interrupt_stack2, CONFIG_ISR_STACK_SIZE);
+extern K_THREAD_STACK_DEFINE(_interrupt_stack3, CONFIG_ISR_STACK_SIZE);
 
-/**
- *
- * @brief Performs architecture-specific initialization
- *
- * This routine performs architecture-specific initialization of the kernel.
- * Trivial stuff is done inline; more complex initialization is done via
- * function calls.
- *
- * @return N/A
- */
-static inline void kernel_arch_init(void)
+struct multiboot_info;
+
+extern FUNC_NORETURN void z_x86_prep_c(void *arg);
+
+#ifdef CONFIG_X86_VERY_EARLY_CONSOLE
+/* Setup ultra-minimal serial driver for printk() */
+void z_x86_early_serial_init(void);
+#endif /* CONFIG_X86_VERY_EARLY_CONSOLE */
+
+#ifdef CONFIG_X86_MMU
+/* Create all page tables with boot configuration and enable paging */
+void z_x86_paging_init(void);
+
+static inline struct x86_page_tables *
+z_x86_thread_page_tables_get(struct k_thread *thread)
 {
-	_kernel.nested = 0;
-	_kernel.irq_stack = Z_THREAD_STACK_BUFFER(_interrupt_stack) +
-				CONFIG_ISR_STACK_SIZE;
-#if CONFIG_X86_STACK_PROTECTION
-	z_x86_mmu_set_flags(&z_x86_kernel_pdpt, _interrupt_stack, MMU_PAGE_SIZE,
-			   MMU_ENTRY_NOT_PRESENT, MMU_PTE_P_MASK);
+#ifdef CONFIG_USERSPACE
+	return thread->arch.ptables;
+#else
+	return &z_x86_kernel_ptables;
 #endif
 }
+#endif /* CONFIG_X86_MMU */
 
-/**
- *
- * @brief Set the return value for the specified thread (inline)
- *
- * @param thread pointer to thread
- * @param value value to set as return value
- *
- * The register used to store the return value from a function call invocation
- * is set to @a value.  It is assumed that the specified @a thread is pending, and
- * thus the threads context is stored in its TCS.
- *
- * @return N/A
+/* Called upon CPU exception that is unhandled and hence fatal; dump
+ * interesting info and call z_x86_fatal_error()
  */
-static ALWAYS_INLINE void
-z_set_thread_return_value(struct k_thread *thread, unsigned int value)
-{
-	/* write into 'eax' slot created in z_swap() entry */
+FUNC_NORETURN void z_x86_unhandled_cpu_exception(uintptr_t vector,
+						 const z_arch_esf_t *esf);
 
-	*(unsigned int *)(thread->callee_saved.esp) = value;
-}
-
-extern void k_cpu_atomic_idle(unsigned int key);
-
-/**
- * @brief Write to a model specific register (MSR)
- *
- * This function is used to write to an MSR.
- *
- * The definitions of the so-called  "Architectural MSRs" are contained
- * in kernel_structs.h and have the format: IA32_XXX_MSR
- *
- * @return N/A
+/* Called upon unrecoverable error; dump registers and transfer control to
+ * kernel via z_fatal_error()
  */
-static inline void z_x86_msr_write(unsigned int msr, u64_t data)
-{
-	u32_t high = data >> 32;
-	u32_t low = data & 0xFFFFFFFF;
+FUNC_NORETURN void z_x86_fatal_error(unsigned int reason,
+				     const z_arch_esf_t *esf);
 
-	__asm__ volatile ("wrmsr" : : "c"(msr), "a"(low), "d"(high));
-}
+/* Common handling for page fault exceptions */
+void z_x86_page_fault_handler(z_arch_esf_t *esf);
 
+#ifdef CONFIG_THREAD_STACK_INFO
 /**
- * @brief Read from a model specific register (MSR)
+ * @brief Check if a memory address range falls within the stack
  *
- * This function is used to read from an MSR.
+ * Given a memory address range, ensure that it falls within the bounds
+ * of the faulting context's stack.
  *
- * The definitions of the so-called  "Architectural MSRs" are contained
- * in kernel_structs.h and have the format: IA32_XXX_MSR
- *
- * @return N/A
+ * @param addr Starting address
+ * @param size Size of the region, or 0 if we just want to see if addr is
+ *             in bounds
+ * @param cs Code segment of faulting context
+ * @return true if addr/size region is not within the thread stack
  */
-static inline u64_t z_x86_msr_read(unsigned int msr)
-{
-	u64_t ret;
+bool z_x86_check_stack_bounds(uintptr_t addr, size_t size, u16_t cs);
+#endif /* CONFIG_THREAD_STACK_INFO */
 
-	__asm__ volatile("rdmsr" : "=A" (ret) : "c" (msr));
-
-	return ret;
-}
-
-#ifdef CONFIG_JAILHOUSE_X2APIC
-#define MSR_X2APIC_BASE 0x00000800
-
-static inline u32_t read_x2apic(unsigned int reg)
-{
-	return z_x86_msr_read(MSR_X2APIC_BASE + reg);
-}
-
-static inline void write_x2apic(unsigned int reg, u32_t val)
-{
-	z_x86_msr_write(MSR_X2APIC_BASE + reg, val);
-}
-#endif
-
+#ifdef CONFIG_USERSPACE
 extern FUNC_NORETURN void z_x86_userspace_enter(k_thread_entry_t user_entry,
 					       void *p1, void *p2, void *p3,
-					       u32_t stack_end,
-					       u32_t stack_start);
+					       uintptr_t stack_end,
+					       uintptr_t stack_start);
 
-#include <stddef.h> /* For size_t */
+/* Preparation steps needed for all threads if user mode is turned on.
+ *
+ * Returns the initial entry point to swap into.
+ */
+void *z_x86_userspace_prepare_thread(struct k_thread *thread);
 
-#ifdef __cplusplus
-}
-#endif
+void z_x86_thread_pt_init(struct k_thread *thread);
 
-#define z_is_in_isr() (_kernel.nested != 0U)
+void z_x86_apply_mem_domain(struct x86_page_tables *ptables,
+			    struct k_mem_domain *mem_domain);
 
-#endif /* _ASMLANGUAGE */
+#endif /* CONFIG_USERSPACE */
+
+void z_x86_do_kernel_oops(const z_arch_esf_t *esf);
+
+#endif /* !_ASMLANGUAGE */
 
 #endif /* ZEPHYR_ARCH_X86_INCLUDE_KERNEL_ARCH_FUNC_H_ */

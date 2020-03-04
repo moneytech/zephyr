@@ -17,6 +17,7 @@
 # 3.1. *_ifdef
 # 3.2. *_ifndef
 # 3.3. *_option compiler compatibility checks
+# 3.3.1 Toolchain integration
 # 3.4. Debugging CMake
 # 3.5. File system management
 
@@ -42,21 +43,33 @@
 #   ${CMAKE_CURRENT_SOURCE_DIR}/random_esp32.c
 #   ${CMAKE_CURRENT_SOURCE_DIR}/utils.c
 # )
+#
+# As a very high-level introduction here are two call graphs that are
+# purposely minimalistic and incomplete.
+#
+#  zephyr_library_cc_option()
+#           |
+#           v
+#  zephyr_library_compile_options()  -->  target_compile_options()
+#
+#
+#  zephyr_cc_option()           --->  target_cc_option()
+#                                          |
+#                                          v
+#  zephyr_cc_option_fallback()  --->  target_cc_option_fallback()
+#                                          |
+#                                          v
+#  zephyr_compile_options()     --->  target_compile_options()
+#
+
 
 # https://cmake.org/cmake/help/latest/command/target_sources.html
 function(zephyr_sources)
   foreach(arg ${ARGV})
-    if(IS_ABSOLUTE ${arg})
-      set(path ${arg})
-    else()
-      set(path ${CMAKE_CURRENT_SOURCE_DIR}/${arg})
-    endif()
-
-    if(IS_DIRECTORY ${path})
+    if(IS_DIRECTORY ${arg})
       message(FATAL_ERROR "zephyr_sources() was called on a directory")
     endif()
-
-    target_sources(zephyr PRIVATE ${path})
+    target_sources(zephyr PRIVATE ${arg})
   endforeach()
 endfunction()
 
@@ -120,7 +133,7 @@ endfunction()
 # includes, options).
 #
 # The naming convention follows:
-# zephyr_get_${build_information}_for_lang${format}(lang x [SKIP_PREFIX])
+# zephyr_get_${build_information}_for_lang${format}(lang x [STRIP_PREFIX])
 # Where
 #  the argument 'x' is written with the result
 # and
@@ -139,11 +152,11 @@ endfunction()
 #   - CXX
 #   - ASM
 #
-# SKIP_PREFIX
+# STRIP_PREFIX
 #
 # By default the result will be returned ready to be passed directly
 # to a compiler, e.g. prefixed with -D, or -I, but it is possible to
-# omit this prefix by specifying 'SKIP_PREFIX' . This option has no
+# omit this prefix by specifying 'STRIP_PREFIX' . This option has no
 # effect for 'compile_options'.
 #
 # e.g.
@@ -313,7 +326,7 @@ endmacro()
 # or zephyr_library_named. The constructors create a CMake library
 # with a name accessible through the variable ZEPHYR_CURRENT_LIBRARY.
 #
-# The variable ZEPHYR_CURRENT_LIBRARY should seldomly be needed since
+# The variable ZEPHYR_CURRENT_LIBRARY should seldom be needed since
 # the zephyr libraries have methods that modify the libraries. These
 # methods have the signature: zephyr_library_<target-function>
 #
@@ -332,15 +345,15 @@ endmacro()
 
 # Constructor with a directory-inferred name
 macro(zephyr_library)
-  zephyr_library_get_current_dir_lib_name(lib_name)
+  zephyr_library_get_current_dir_lib_name(${ZEPHYR_BASE} lib_name)
   zephyr_library_named(${lib_name})
 endmacro()
 
-# Determines what the current directory's lib name would be and writes
-# it to the argument "lib_name"
-macro(zephyr_library_get_current_dir_lib_name lib_name)
+# Determines what the current directory's lib name would be according to the
+# provided base and writes it to the argument "lib_name"
+macro(zephyr_library_get_current_dir_lib_name base lib_name)
   # Remove the prefix (/home/sebo/zephyr/driver/serial/CMakeLists.txt => driver/serial/CMakeLists.txt)
-  file(RELATIVE_PATH name ${ZEPHYR_BASE} ${CMAKE_CURRENT_LIST_FILE})
+  file(RELATIVE_PATH name ${base} ${CMAKE_CURRENT_LIST_FILE})
 
   # Remove the filename (driver/serial/CMakeLists.txt => driver/serial)
   get_filename_component(name ${name} DIRECTORY)
@@ -363,6 +376,34 @@ macro(zephyr_library_named name)
   target_link_libraries(${name} PUBLIC zephyr_interface)
 endmacro()
 
+# Provides amend functionality to a Zephyr library for out-of-tree usage.
+#
+# When called from a Zephyr module, the corresponding zephyr library defined
+# within Zephyr will be looked up.
+#
+# Note, in order to ensure correct library when amending, the folder structure in the
+# Zephyr module must resemble the structure used in Zephyr, as example:
+#
+# Example: to amend the zephyr library created in
+# ZEPHYR_BASE/drivers/entropy/CMakeLists.txt
+# add the following file:
+# ZEPHYR_MODULE/drivers/entropy/CMakeLists.txt
+# with content:
+# zephyr_library_amend()
+# zephyr_libray_add_sources(...)
+#
+macro(zephyr_library_amend)
+  # This is a macro because we need to ensure the ZEPHYR_CURRENT_LIBRARY and
+  # following zephyr_library_* calls are executed within the scope of the
+  # caller.
+  if(NOT ZEPHYR_CURRENT_MODULE_DIR)
+    message(FATAL_ERROR "Function only available for Zephyr modules.")
+  endif()
+
+  zephyr_library_get_current_dir_lib_name(${ZEPHYR_CURRENT_MODULE_DIR} lib_name)
+
+  set(ZEPHYR_CURRENT_LIBRARY ${lib_name})
+endmacro()
 
 function(zephyr_link_interface interface)
   target_link_libraries(${interface} INTERFACE zephyr_interface)
@@ -427,10 +468,33 @@ endfunction()
 # Add the existing CMake library 'library' to the global list of
 # Zephyr CMake libraries. This is done automatically by the
 # constructor but must called explicitly on CMake libraries that do
-# not use a zephyr library constructor, but have source files that
-# need to be included in the build.
+# not use a zephyr library constructor.
 function(zephyr_append_cmake_library library)
   set_property(GLOBAL APPEND PROPERTY ZEPHYR_LIBS ${library})
+endfunction()
+
+# Add the imported library 'library_name', located at 'library_path' to the
+# global list of Zephyr CMake libraries.
+function(zephyr_library_import library_name library_path)
+  add_library(${library_name} STATIC IMPORTED GLOBAL)
+  set_target_properties(${library_name}
+    PROPERTIES IMPORTED_LOCATION
+    ${library_path}
+    )
+  zephyr_append_cmake_library(${library_name})
+endfunction()
+
+# Place the current zephyr library in the application memory partition.
+#
+# The partition argument is the name of the partition where the library shall
+# be placed.
+#
+# Note: Ensure the given partition has been define using
+#       K_APPMEM_PARTITION_DEFINE in source code.
+function(zephyr_library_app_memory partition)
+  set_property(TARGET zephyr_property_target
+               APPEND PROPERTY COMPILE_OPTIONS
+               "-l" $<TARGET_FILE_NAME:${ZEPHYR_CURRENT_LIBRARY}> "${partition}")
 endfunction()
 
 # 1.2.1 zephyr_interface_library_*
@@ -530,6 +594,66 @@ endfunction()
 # This section provides glue between CMake and the Python code that
 # manages the runners.
 
+function(_board_check_runner_type type) # private helper
+  if (NOT (("${type}" STREQUAL "FLASH") OR ("${type}" STREQUAL "DEBUG")))
+    message(FATAL_ERROR "invalid type ${type}; should be FLASH or DEBUG")
+  endif()
+endfunction()
+
+# This function sets the runner for the board unconditionally.  It's
+# meant to be used from application CMakeLists.txt files.
+#
+# NOTE: Usually board_set_xxx_ifnset() is best in board.cmake files.
+#       This lets the user set the runner at cmake time, or in their
+#       own application's CMakeLists.txt.
+#
+# Usage:
+#   board_set_runner(FLASH pyocd)
+#
+# This would set the board's flash runner to "pyocd".
+#
+# In general, "type" is FLASH or DEBUG, and "runner" is the name of a
+# runner.
+function(board_set_runner type runner)
+  _board_check_runner_type(${type})
+  if (DEFINED BOARD_${type}_RUNNER)
+    message(STATUS "overriding ${type} runner ${BOARD_${type}_RUNNER}; it's now ${runner}")
+  endif()
+  set(BOARD_${type}_RUNNER ${runner} PARENT_SCOPE)
+endfunction()
+
+# This macro is like board_set_runner(), but will only make a change
+# if that runner is currently not set.
+#
+# See also board_set_flasher_ifnset() and board_set_debugger_ifnset().
+macro(board_set_runner_ifnset type runner)
+  _board_check_runner_type(${type})
+  # This is a macro because set_ifndef() works at parent scope.
+  # If this were a function, that would be this function's scope,
+  # which wouldn't work.
+  set_ifndef(BOARD_${type}_RUNNER ${runner})
+endmacro()
+
+# A convenience macro for board_set_runner(FLASH ${runner}).
+macro(board_set_flasher runner)
+  board_set_runner(FLASH ${runner})
+endmacro()
+
+# A convenience macro for board_set_runner(DEBUG ${runner}).
+macro(board_set_debugger runner)
+  board_set_runner(DEBUG ${runner})
+endmacro()
+
+# A convenience macro for board_set_runner_ifnset(FLASH ${runner}).
+macro(board_set_flasher_ifnset runner)
+  board_set_runner_ifnset(FLASH ${runner})
+endmacro()
+
+# A convenience macro for board_set_runner_ifnset(DEBUG ${runner}).
+macro(board_set_debugger_ifnset runner)
+  board_set_runner_ifnset(DEBUG ${runner})
+endmacro()
+
 # This function is intended for board.cmake files and application
 # CMakeLists.txt files.
 #
@@ -622,18 +746,19 @@ endfunction()
 # caching comes in addition to the caching that CMake does in the
 # build folder's CMakeCache.txt)
 function(zephyr_check_compiler_flag lang option check)
+  # Check if the option is covered by any hardcoded check before doing
+  # an automated test.
+  zephyr_check_compiler_flag_hardcoded(${lang} "${option}" check exists)
+  if(exists)
+    set(check ${check} PARENT_SCOPE)
+    return()
+  endif()
+
   # Locate the cache directory
   set_ifndef(
     ZEPHYR_TOOLCHAIN_CAPABILITY_CACHE_DIR
     ${USER_CACHE_DIR}/ToolchainCapabilityDatabase
     )
-  if(DEFINED ZEPHYR_TOOLCHAIN_CAPABILITY_CACHE)
-    assert(0
-      "The deprecated ZEPHYR_TOOLCHAIN_CAPABILITY_CACHE is now a directory"
-      "and is named ZEPHYR_TOOLCHAIN_CAPABILITY_CACHE_DIR"
-      )
-    # Remove this deprecation warning in version 1.14.
-  endif()
 
   # The toolchain capability database/cache is maintained as a
   # directory of files. The filenames in the directory are keys, and
@@ -672,17 +797,46 @@ function(zephyr_check_compiler_flag lang option check)
     return()
   endif()
 
-  # Test the flag
-  check_compiler_flag(${lang} "${option}" inner_check)
+  # Flags that start with -Wno-<warning> can not be tested by
+  # check_compiler_flag, they will always pass, but -W<warning> can be
+  # tested, so to test -Wno-<warning> flags we test -W<warning>
+  # instead.
+  if("${option}" MATCHES "-Wno-(.*)")
+    set(possibly_translated_option -W${CMAKE_MATCH_1})
+  else()
+    set(possibly_translated_option ${option})
+  endif()
+
+  check_compiler_flag(${lang} "${possibly_translated_option}" inner_check)
 
   set(${check} ${inner_check} PARENT_SCOPE)
 
   # Populate the cache
   if(NOT (EXISTS ${key_path}))
+
+    # This is racy. As often with race conditions, this one can easily be
+    # made worse and demonstrated with a simple delay:
+    #    execute_process(COMMAND "sleep" "5")
+    # Delete the cache, add the sleep above and run sanitycheck with a
+    # large number of JOBS. Once it's done look at the log.txt file
+    # below and you will see that concurrent cmake processes created the
+    # same files multiple times.
+
+    # While there are a number of reasons why this race seems both very
+    # unlikely and harmless, let's play it safe anyway and write to a
+    # private, temporary file first. All modern filesystems seem to
+    # support at least one atomic rename API and cmake's file(RENAME
+    # ...) officially leverages that.
+    string(RANDOM LENGTH 8 tempsuffix)
+
     file(
       WRITE
-      ${key_path}
+      "${key_path}_tmp_${tempsuffix}"
       ${inner_check}
+      )
+    file(
+      RENAME
+      "${key_path}_tmp_${tempsuffix}" "${key_path}"
       )
 
     # Populate a metadata file (only intended for trouble shooting)
@@ -695,6 +849,139 @@ function(zephyr_check_compiler_flag lang option check)
       )
   endif()
 endfunction()
+
+function(zephyr_check_compiler_flag_hardcoded lang option check exists)
+  # Various flags that are not supported for CXX may not be testable
+  # because they would produce a warning instead of an error during
+  # the test.  Exclude them by toolchain-specific blacklist.
+  if((${lang} STREQUAL CXX) AND ("${option}" IN_LIST CXX_EXCLUDED_OPTIONS))
+    set(check 0 PARENT_SCOPE)
+    set(exists 1 PARENT_SCOPE)
+  else()
+    # There does not exist a hardcoded check for this option.
+    set(exists 0 PARENT_SCOPE)
+  endif()
+endfunction(zephyr_check_compiler_flag_hardcoded)
+
+# zephyr_linker_sources(<location> [SORT_KEY <sort_key>] <files>)
+#
+# <files> is one or more .ld formatted files whose contents will be
+#    copied/included verbatim into the given <location> in the global linker.ld.
+#    Preprocessor directives work inside <files>. Relative paths are resolved
+#    relative to the calling file, like zephyr_sources().
+# <location> is one of
+#    NOINIT       Inside the noinit output section.
+#    RWDATA       Inside the data output section.
+#    RODATA       Inside the rodata output section.
+#    ROM_START    Inside the first output section of the image. This option is
+#                 currently only available on ARM Cortex-M, ARM Cortex-R,
+#                 x86, ARC, and openisa_rv32m1.
+#    RAM_SECTIONS Inside the RAMABLE_REGION GROUP.
+#    SECTIONS     Near the end of the file. Don't use this when linking into
+#                 RAMABLE_REGION, use RAM_SECTIONS instead.
+# <sort_key> is an optional key to sort by inside of each location. The key must
+#    be alphanumeric, and the keys are sorted alphabetically. If no key is
+#    given, the key 'default' is used. Keys are case-sensitive.
+#
+# Use NOINIT, RWDATA, and RODATA unless they don't work for your use case.
+#
+# When placing into NOINIT, RWDATA, RODATA, ROM_START, the contents of the files
+# will be placed inside an output section, so assume the section definition is
+# already present, e.g.:
+#    _mysection_start = .;
+#    KEEP(*(.mysection));
+#    _mysection_end = .;
+#    _mysection_size = ABSOLUTE(_mysection_end - _mysection_start);
+#
+# When placing into SECTIONS or RAM_SECTIONS, the files must instead define
+# their own output sections to achieve the same thing:
+#    SECTION_PROLOGUE(.mysection,,)
+#    {
+#        _mysection_start = .;
+#        KEEP(*(.mysection))
+#        _mysection_end = .;
+#    } GROUP_LINK_IN(ROMABLE_REGION)
+#    _mysection_size = _mysection_end - _mysection_start;
+#
+# Note about the above examples: If the first example was used with RODATA, and
+# the second with SECTIONS, the two examples do the same thing from a user
+# perspective.
+#
+# Friendly reminder: Beware of the different ways the location counter ('.')
+# behaves inside vs. outside section definitions.
+function(zephyr_linker_sources location)
+  # Set up the paths to the destination files. These files are #included inside
+  # the global linker.ld.
+  set(snippet_base      "${__build_dir}/include/generated")
+  set(sections_path     "${snippet_base}/snippets-sections.ld")
+  set(ram_sections_path "${snippet_base}/snippets-ram-sections.ld")
+  set(rom_start_path    "${snippet_base}/snippets-rom-start.ld")
+  set(noinit_path       "${snippet_base}/snippets-noinit.ld")
+  set(rwdata_path       "${snippet_base}/snippets-rwdata.ld")
+  set(rodata_path       "${snippet_base}/snippets-rodata.ld")
+
+  # Clear destination files if this is the first time the function is called.
+  get_property(cleared GLOBAL PROPERTY snippet_files_cleared)
+  if (NOT DEFINED cleared)
+    file(WRITE ${sections_path} "")
+    file(WRITE ${ram_sections_path} "")
+    file(WRITE ${rom_start_path} "")
+    file(WRITE ${noinit_path} "")
+    file(WRITE ${rwdata_path} "")
+    file(WRITE ${rodata_path} "")
+    set_property(GLOBAL PROPERTY snippet_files_cleared true)
+  endif()
+
+  # Choose destination file, based on the <location> argument.
+  if ("${location}" STREQUAL "SECTIONS")
+    set(snippet_path "${sections_path}")
+  elseif("${location}" STREQUAL "RAM_SECTIONS")
+    set(snippet_path "${ram_sections_path}")
+  elseif("${location}" STREQUAL "ROM_START")
+    set(snippet_path "${rom_start_path}")
+  elseif("${location}" STREQUAL "NOINIT")
+    set(snippet_path "${noinit_path}")
+  elseif("${location}" STREQUAL "RWDATA")
+    set(snippet_path "${rwdata_path}")
+  elseif("${location}" STREQUAL "RODATA")
+    set(snippet_path "${rodata_path}")
+  else()
+    message(fatal_error "Must choose valid location for linker snippet.")
+  endif()
+
+  cmake_parse_arguments(L "" "SORT_KEY" "" ${ARGN})
+  set(SORT_KEY default)
+  if(DEFINED L_SORT_KEY)
+    set(SORT_KEY ${L_SORT_KEY})
+  endif()
+
+  foreach(file IN ITEMS ${L_UNPARSED_ARGUMENTS})
+    # Resolve path.
+    if(IS_ABSOLUTE ${file})
+      set(path ${file})
+    else()
+      set(path ${CMAKE_CURRENT_SOURCE_DIR}/${file})
+    endif()
+
+    if(IS_DIRECTORY ${path})
+      message(FATAL_ERROR "zephyr_linker_sources() was called on a directory")
+    endif()
+
+    # Find the relative path to the linker file from the include folder.
+    file(RELATIVE_PATH relpath ${ZEPHYR_BASE}/include ${path})
+
+    # Create strings to be written into the file
+    set (include_str "/* Sort key: \"${SORT_KEY}\" */#include \"${relpath}\"")
+
+    # Add new line to existing lines, sort them, and write them back.
+    file(STRINGS ${snippet_path} lines) # Get current lines (without newlines).
+    list(APPEND lines ${include_str})
+    list(SORT lines)
+    string(REPLACE ";" "\n;" lines "${lines}") # Add newline to each line.
+    file(WRITE ${snippet_path} ${lines} "\n")
+  endforeach()
+endfunction(zephyr_linker_sources)
+
 
 # Helper function for CONFIG_CODE_DATA_RELOCATION
 # Call this function with 2 arguments file and then memory location
@@ -770,9 +1057,12 @@ endfunction()
 
 # 2.2 Misc
 #
+# import_kconfig(<prefix> <kconfig_fragment> [<keys>])
+#
 # Parse a KConfig fragment (typically with extension .config) and
 # introduce all the symbols that are prefixed with 'prefix' into the
-# CMake namespace
+# CMake namespace. List all created variable names in the 'keys'
+# output variable if present.
 function(import_kconfig prefix kconfig_fragment)
   # Parse the lines prefixed with 'prefix' in ${kconfig_fragment}
   file(
@@ -800,6 +1090,11 @@ function(import_kconfig prefix kconfig_fragment)
     endif()
 
     set("${CONF_VARIABLE_NAME}" "${CONF_VARIABLE_VALUE}" PARENT_SCOPE)
+    list(APPEND keys "${CONF_VARIABLE_NAME}")
+  endforeach()
+
+  foreach(outvar ${ARGN})
+    set(${outvar} "${keys}" PARENT_SCOPE)
   endforeach()
 endfunction()
 
@@ -897,6 +1192,12 @@ function(zephyr_library_sources_ifdef feature_toggle source)
   endif()
 endfunction()
 
+function(zephyr_library_sources_ifndef feature_toggle source)
+  if(NOT ${feature_toggle})
+    zephyr_library_sources(${source} ${ARGN})
+  endif()
+endfunction()
+
 function(zephyr_sources_ifdef feature_toggle)
   if(${${feature_toggle}})
     zephyr_sources(${ARGN})
@@ -969,6 +1270,12 @@ function(zephyr_library_link_libraries_ifdef feature_toggle item)
   endif()
 endfunction()
 
+function(zephyr_linker_sources_ifdef feature_toggle)
+  if(${${feature_toggle}})
+    zephyr_linker_sources(${ARGN})
+  endif()
+endfunction()
+
 macro(list_append_ifdef feature_toggle list)
   if(${${feature_toggle}})
     list(APPEND ${list} ${ARGN})
@@ -1001,7 +1308,7 @@ function(zephyr_compile_options_ifndef feature_toggle)
   endif()
 endfunction()
 
-# 3.2. *_option Compiler-compatibility checks
+# 3.3. *_option Compiler-compatibility checks
 #
 # Utility functions for silently omitting compiler flags when the
 # compiler lacks support. *_cc_option was ported from KBuild, see
@@ -1091,6 +1398,45 @@ function(target_ld_options target scope)
   endforeach()
 endfunction()
 
+# 3.3.1 Toolchain integration
+#
+# 'toolchain_parse_make_rule' is a function that parses the output of
+# 'gcc -M'.
+#
+# The argument 'input_file' is in input parameter with the path to the
+# file with the dependency information.
+#
+# The argument 'include_files' is an output parameter with the result
+# of parsing the include files.
+function(toolchain_parse_make_rule input_file include_files)
+  file(READ ${input_file} input)
+
+  # The file is formatted like this:
+  # empty_file.o: misc/empty_file.c \
+  # nrf52840_pca10056/nrf52840_pca10056.dts \
+  # nrf52840_qiaa.dtsi
+
+  # Get rid of the backslashes
+  string(REPLACE "\\" ";" input_as_list ${input})
+
+  # Pop the first line and treat it specially
+  list(GET input_as_list 0 first_input_line)
+  string(FIND ${first_input_line} ": " index)
+  math(EXPR j "${index} + 2")
+  string(SUBSTRING ${first_input_line} ${j} -1 first_include_file)
+  list(REMOVE_AT input_as_list 0)
+
+  list(APPEND result ${first_include_file})
+
+  # Add the other lines
+  list(APPEND result ${input_as_list})
+
+  # Strip away the newlines and whitespaces
+  list(TRANSFORM result STRIP)
+
+  set(${include_files} ${result} PARENT_SCOPE)
+endfunction()
+
 # 3.4. Debugging CMake
 
 # Usage:
@@ -1113,10 +1459,10 @@ macro(assert test comment)
 endmacro()
 
 # Usage:
-#   assert_not(FLASH_SCRIPT "FLASH_SCRIPT has been removed; use BOARD_FLASH_RUNNER")
+#   assert_not(OBSOLETE_VAR "OBSOLETE_VAR has been removed; use NEW_VAR instead")
 #
-# will cause a FATAL_ERROR and print an errorm essage if the first
-# espression is true
+# will cause a FATAL_ERROR and print an error message if the first
+# expression is true
 macro(assert_not test comment)
   if(${test})
     message(FATAL_ERROR "Assertion failed: ${comment}")
@@ -1195,10 +1541,12 @@ function(find_appropriate_cache_directory dir)
     if(DEFINED ENV{${env_var}})
       set(env_dir $ENV{${env_var}})
 
-      check_if_directory_is_writeable(${env_dir} ok)
+      set(test_user_dir ${env_dir}/${env_suffix_${env_var}})
+
+      check_if_directory_is_writeable(${test_user_dir} ok)
       if(${ok})
         # The directory is write-able
-        set(user_dir ${env_dir}/${env_suffix_${env_var}})
+        set(user_dir ${test_user_dir})
         break()
       else()
         # The directory was not writeable, keep looking for a suitable

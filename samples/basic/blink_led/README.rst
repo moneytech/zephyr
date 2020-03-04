@@ -14,6 +14,13 @@ reaches 64 Hz, the blinking frequency will be halved every 4 seconds
 until the blinking frequency reaches 1 Hz. This completes a whole
 blinking cycle. This faster-then-slower LED blinking cycle repeats forever.
 
+Since for some PWM hardware it might be not possible to set the PWM period of
+1 second (to achieve the blinking frequency of 1 Hz), this application at its
+beginning tries to determine what is available for the used PWM hardware,
+and accordingly decreases the maximum PWM period (thus increases the initial
+blinking frequency) if needed.
+
+
 Wiring
 ******
 
@@ -39,16 +46,11 @@ nrf52840_pca10056
 =================
 No special board setup is necessary because there is an on-board LED connected.
 
-Arduino 101 and Quark D2000 CRB
-===============================
-You will need to connect the LED to ground and PWM0 via the shield.
-You may need a current limiting resistor. See your LED datasheet.
-
 Building and Running
 ********************
 
 This sample can be built for multiple boards, in this example we will build it
-for the arduino_101 board:
+for the nrf52840_pca10056 board:
 
 .. zephyr-app-commands::
    :zephyr-app: samples/basic/blink_led
@@ -58,4 +60,3 @@ for the arduino_101 board:
 
 After flashing the image to the board, the user LED on the board should start to
 blinking as discussed in overview
-

@@ -7,8 +7,8 @@
 #include <kernel.h>
 #include <device.h>
 #include <init.h>
-#include <pinmux.h>
-#include <sys_io.h>
+#include <drivers/pinmux.h>
+#include <sys/sys_io.h>
 
 #include <pinmux/stm32/pinmux_stm32.h>
 
@@ -18,6 +18,9 @@ static const struct pin_config pinconf[] = {
 	{STM32_PIN_PA2, STM32F4_PINMUX_FUNC_PA2_USART2_TX},
 	{STM32_PIN_PA3, STM32F4_PINMUX_FUNC_PA3_USART2_RX},
 #endif	/* CONFIG_UART_2 */
+#ifdef CONFIG_PWM_STM32_4
+	{STM32_PIN_PD12, STM32F4_PINMUX_FUNC_PD12_PWM4_CH1 },
+ #endif /* CONFIG_PWM_STM32_4 */
 };
 
 static int pinmux_stm32_init(struct device *port)

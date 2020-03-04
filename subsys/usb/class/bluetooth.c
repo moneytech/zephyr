@@ -7,7 +7,7 @@
  */
 
 #include <init.h>
-#include <misc/byteorder.h>
+#include <sys/byteorder.h>
 
 #include <usb/usb_device.h>
 #include <usb/usb_common.h>
@@ -22,10 +22,6 @@
 #define LOG_LEVEL CONFIG_USB_DEVICE_LOG_LEVEL
 #include <logging/log.h>
 LOG_MODULE_REGISTER(usb_bluetooth);
-
-#if !defined(CONFIG_USB_COMPOSITE_DEVICE)
-static u8_t interface_data[64];
-#endif
 
 static K_FIFO_DEFINE(rx_queue);
 static K_FIFO_DEFINE(tx_queue);
@@ -42,7 +38,12 @@ NET_BUF_POOL_DEFINE(tx_pool, CONFIG_BT_HCI_CMD_COUNT, CMD_BUF_SIZE,
 #define ACL_BUF_COUNT 4
 #endif
 
+#if defined(CONFIG_BT_CTLR_TX_BUFFER_SIZE)
+#define BT_L2CAP_MTU (CONFIG_BT_CTLR_TX_BUFFER_SIZE - BT_L2CAP_HDR_SIZE)
+#else
 #define BT_L2CAP_MTU 64
+#endif
+
 /* Data size needed for ACL buffers */
 #define BT_BUF_ACL_SIZE BT_L2CAP_BUF_SIZE(BT_L2CAP_MTU)
 NET_BUF_POOL_DEFINE(acl_tx_pool, ACL_BUF_COUNT, BT_BUF_ACL_SIZE,
@@ -150,7 +151,7 @@ static void hci_rx_thread(void)
 			usb_transfer_sync(
 				bluetooth_ep_data[HCI_INT_EP_IDX].ep_addr,
 				buf->data, buf->len,
-				USB_TRANS_WRITE);
+				USB_TRANS_WRITE | USB_TRANS_NO_ZLP);
 			break;
 		case BT_BUF_ACL_IN:
 			usb_transfer_sync(
@@ -199,7 +200,7 @@ static void acl_read_cb(u8_t ep, int size, void *priv)
 	buf = net_buf_alloc(&acl_tx_pool, K_FOREVER);
 	__ASSERT_NO_MSG(buf);
 
-	net_buf_reserve(buf, CONFIG_BT_HCI_RESERVE);
+	net_buf_reserve(buf, BT_BUF_RESERVE);
 
 	/* Start a new read transfer */
 	usb_transfer(bluetooth_ep_data[HCI_OUT_EP_IDX].ep_addr, buf->data,
@@ -268,7 +269,7 @@ static int bluetooth_class_handler(struct usb_setup_packet *setup,
 		return -ENOMEM;
 	}
 
-	net_buf_reserve(buf, CONFIG_BT_HCI_RESERVE);
+	net_buf_reserve(buf, BT_BUF_RESERVE);
 	bt_buf_set_type(buf, BT_BUF_CMD);
 
 	net_buf_add_mem(buf, *data, *len);
@@ -286,7 +287,7 @@ static void bluetooth_interface_config(struct usb_desc_header *head,
 	bluetooth_cfg.if0.bInterfaceNumber = bInterfaceNumber;
 }
 
-USBD_CFG_DATA_DEFINE(hci) struct usb_cfg_data bluetooth_config = {
+USBD_CFG_DATA_DEFINE(primary, hci) struct usb_cfg_data bluetooth_config = {
 	.usb_device_description = NULL,
 	.interface_config = bluetooth_interface_config,
 	.interface_descriptor = &bluetooth_cfg.if0,
@@ -295,7 +296,6 @@ USBD_CFG_DATA_DEFINE(hci) struct usb_cfg_data bluetooth_config = {
 		.class_handler = bluetooth_class_handler,
 		.custom_handler = NULL,
 		.vendor_handler = NULL,
-		.payload_data = NULL,
 	},
 	.num_endpoints = ARRAY_SIZE(bluetooth_ep_data),
 	.endpoint = bluetooth_ep_data,
@@ -312,25 +312,6 @@ static int bluetooth_init(struct device *dev)
 		LOG_ERR("Failed to open Bluetooth raw channel: %d", ret);
 		return ret;
 	}
-
-#ifndef CONFIG_USB_COMPOSITE_DEVICE
-	bluetooth_config.interface.payload_data = interface_data;
-	bluetooth_config.usb_device_description =
-		usb_get_device_descriptor();
-	/* Initialize the USB driver with the right configuration */
-	ret = usb_set_config(&bluetooth_config);
-	if (ret < 0) {
-		LOG_ERR("Failed to config USB");
-		return ret;
-	}
-
-	/* Enable USB driver */
-	ret = usb_enable(&bluetooth_config);
-	if (ret < 0) {
-		LOG_ERR("Failed to enable USB");
-		return ret;
-	}
-#endif
 
 	k_thread_create(&rx_thread_data, rx_thread_stack,
 			K_THREAD_STACK_SIZEOF(rx_thread_stack),

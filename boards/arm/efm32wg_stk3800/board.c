@@ -6,8 +6,8 @@
 
 #include <init.h>
 #include "board.h"
-#include <gpio.h>
-#include <misc/printk.h>
+#include <drivers/gpio.h>
+#include <sys/printk.h>
 
 static int efm32wg_stk3800_init(struct device *dev)
 {
@@ -23,8 +23,7 @@ static int efm32wg_stk3800_init(struct device *dev)
 		return -ENODEV;
 	}
 
-	gpio_pin_configure(bce_dev, BC_ENABLE_GPIO_PIN, GPIO_DIR_OUT);
-	gpio_pin_write(bce_dev, BC_ENABLE_GPIO_PIN, 1);
+	gpio_pin_configure(bce_dev, BC_ENABLE_GPIO_PIN, GPIO_OUTPUT_HIGH);
 
 	return 0;
 }

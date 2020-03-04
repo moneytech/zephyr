@@ -1,10 +1,7 @@
-# Kconfig.stats - Statistics Options
+# Statistics Options
 
-#
 # Copyright (c) 2016 Intel Corporation.
-#
 # SPDX-License-Identifier: Apache-2.0
-#
 
 menuconfig NET_STATISTICS
 	bool "Network statistics"
@@ -88,6 +85,13 @@ config NET_STATISTICS_MLD
 	default y
 	help
 	  Keep track of MLD related statistics
+
+config NET_STATISTICS_PPP
+	bool "Point-to-point (PPP) statistics"
+	depends on NET_PPP
+	default y
+	help
+	  Keep track of PPP related statistics
 
 config NET_STATISTICS_ETHERNET
 	bool "Ethernet statistics"

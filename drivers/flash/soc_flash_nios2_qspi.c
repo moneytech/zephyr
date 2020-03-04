@@ -12,11 +12,11 @@
 #include <kernel.h>
 #include <device.h>
 #include <string.h>
-#include <flash.h>
+#include <drivers/flash.h>
 #include <errno.h>
 #include <init.h>
 #include <soc.h>
-#include <misc/util.h>
+#include <sys/util.h>
 #include "flash_priv.h"
 #include "altera_generic_quad_spi_controller2_regs.h"
 #include "altera_generic_quad_spi_controller2.h"
@@ -79,7 +79,7 @@ static int flash_nios2_qspi_erase(struct device *dev, off_t offset, size_t len)
 	if (((offset + len) > qspi_dev->data_end) ||
 			(0 != (erase_offset &
 			       (NIOS2_WRITE_BLOCK_SIZE - 1)))) {
-		LOG_ERR("erase failed at offset %ld", (long)offset);
+		LOG_ERR("erase failed at offset 0x%lx", (long)offset);
 		rc = -EINVAL;
 		goto qspi_erase_err;
 	}
@@ -138,7 +138,7 @@ static int flash_nios2_qspi_erase(struct device *dev, off_t offset, size_t len)
 
 		if ((flag_status & FLAG_STATUS_ERASE_ERROR) ||
 				(flag_status & FLAG_STATUS_PROTECTION_ERROR)) {
-			LOG_ERR("erase failed, Flag Status Reg:%x",
+			LOG_ERR("erase failed, Flag Status Reg:0x%x",
 								flag_status);
 			rc = -EIO;
 			goto qspi_erase_err;
@@ -237,7 +237,7 @@ static int flash_nios2_qspi_write_block(struct device *dev, int block_offset,
 
 		if ((flag_status & FLAG_STATUS_PROGRAM_ERROR) ||
 			(flag_status & FLAG_STATUS_PROTECTION_ERROR)) {
-			LOG_ERR("write failed, Flag Status Reg:%x",
+			LOG_ERR("write failed, Flag Status Reg:0x%x",
 								flag_status);
 			rc = -EIO; /* sector might be protected */
 			goto qspi_write_block_err;
@@ -272,7 +272,7 @@ static int flash_nios2_qspi_write(struct device *dev, off_t offset,
 	if ((data == NULL) || ((offset + len) > qspi_dev->data_end) ||
 			(0 != (write_offset &
 			       (NIOS2_WRITE_BLOCK_SIZE - 1)))) {
-		LOG_ERR("write failed at offset %ld", (long)offset);
+		LOG_ERR("write failed at offset 0x%lx", (long)offset);
 		rc = -EINVAL;
 		goto qspi_write_err;
 	}
@@ -330,18 +330,40 @@ static int flash_nios2_qspi_read(struct device *dev, off_t offset,
 	u32_t word_to_read, bytes_to_copy;
 	s32_t rc = 0;
 
-	k_sem_take(&flash_cfg->sem_lock, K_FOREVER);
 	/*
-	 * check if offset is word aligned and
-	 * length is with in the range
+	 * check if offset and length are within the range
 	 */
-	if ((data == NULL) || ((offset + len) > qspi_dev->data_end) ||
-			(0 != (read_offset & (NIOS2_WRITE_BLOCK_SIZE - 1)))) {
-		LOG_ERR("read failed at offset %ld", (long)offset);
-		rc = -EINVAL;
-		goto qspi_read_err;
+	if ((data == NULL) || (offset < qspi_dev->data_base) ||
+	    ((offset + len) > qspi_dev->data_end)) {
+		LOG_ERR("read failed at offset 0x%lx", (long)offset);
+		return -EINVAL;
 	}
 
+	if (!len) {
+		return 0;
+	}
+
+	k_sem_take(&flash_cfg->sem_lock, K_FOREVER);
+
+	/* first unaligned start */
+	read_offset &= ~(NIOS2_WRITE_BLOCK_SIZE - 1U);
+	if (offset > read_offset) {
+		/* number of bytes from source to copy */
+		bytes_to_copy = NIOS2_WRITE_BLOCK_SIZE - (offset - read_offset);
+		if (bytes_to_copy > remaining_length) {
+			bytes_to_copy = remaining_length;
+		}
+		/* read from flash 32 bits at a time */
+		word_to_read = IORD_32DIRECT(qspi_dev->data_base, read_offset);
+		memcpy((u8_t *)data, (u8_t *)&word_to_read + offset -
+		       read_offset, bytes_to_copy);
+		/* update offset and length variables */
+		read_offset += NIOS2_WRITE_BLOCK_SIZE;
+		buffer_offset += bytes_to_copy;
+		remaining_length -= bytes_to_copy;
+	}
+
+	/* aligned part, including unaligned end */
 	while (remaining_length > 0) {
 		/* number of bytes from source to copy */
 		bytes_to_copy = NIOS2_WRITE_BLOCK_SIZE;
@@ -354,14 +376,12 @@ static int flash_nios2_qspi_read(struct device *dev, off_t offset,
 		word_to_read = IORD_32DIRECT(qspi_dev->data_base, read_offset);
 		memcpy((u8_t *)data + buffer_offset, &word_to_read,
 		       bytes_to_copy);
-
 		/* update offset and length variables */
 		read_offset += bytes_to_copy;
 		buffer_offset += bytes_to_copy;
 		remaining_length -= bytes_to_copy;
 	}
 
-qspi_read_err:
 	k_sem_give(&flash_cfg->sem_lock);
 	return rc;
 }

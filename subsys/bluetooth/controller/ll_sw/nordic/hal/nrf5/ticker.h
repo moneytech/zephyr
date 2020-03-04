@@ -7,10 +7,10 @@
 
 #define HAL_TICKER_CNTR_CLK_FREQ_HZ 32768U
 
-/* Macro definining the minimum counter compare offset */
+/* Macro defining the minimum counter compare offset */
 #define HAL_TICKER_CNTR_CMP_OFFSET_MIN 3
 
-/* Macro definining the max. counter update latency in ticks */
+/* Macro defining the max. counter update latency in ticks */
 #define HAL_TICKER_CNTR_SET_LATENCY 0
 
 /* Macro to translate microseconds to tick units.
@@ -47,3 +47,7 @@
  */
 #define HAL_TICKER_REMAINDER_RANGE \
 	HAL_TICKER_TICKS_TO_US(1000000)
+
+/* Macro defining the margin for positioning re-scheduled nodes */
+#define HAL_TICKER_RESCHEDULE_MARGIN \
+	HAL_TICKER_US_TO_TICKS(150)

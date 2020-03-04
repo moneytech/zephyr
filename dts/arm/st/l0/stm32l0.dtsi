@@ -1,10 +1,10 @@
 /*
  * Copyright (c) 2018 Endre Karlson <endre.karlson@gmail.com>
+ * Copyright (c) 2019 Centaur Analytics, Inc
  *
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <st/l0/stm32l0-pinctrl.dtsi>
 #include <arm/armv6-m.dtsi>
 #include <dt-bindings/clock/stm32_clock.h>
 #include <dt-bindings/i2c/i2c.h>
@@ -23,7 +23,6 @@
 	};
 
 	sram0: memory@20000000 {
-		device_type = "memory";
 		compatible = "mmio-sram";
 	};
 
@@ -47,7 +46,6 @@
 
 		rcc: rcc@40021000 {
 			compatible = "st,stm32-rcc";
-			clocks-controller;
 			#clock-cells = <2>;
 			reg = <0x40021000 0x400>;
 			label = "STM32_CLK_RCC";
@@ -105,10 +103,19 @@
 			};
 		};
 
-		idwg: watchdog@40003000 {
+		iwdg: watchdog@40003000 {
 			compatible = "st,stm32-watchdog";
 			reg = <0x40003000 0x400>;
 			label = "IWDG";
+			status = "disabled";
+		};
+
+		wwdg: watchdog@40002c00 {
+			compatible = "st,stm32-window-watchdog";
+			reg = <0x40002C00 0x400>;
+			clocks = <&rcc STM32_CLOCK_BUS_APB1 0x00000800>;
+			label = "WWDG";
+			interrupts = <0 7>;
 			status = "disabled";
 		};
 
@@ -161,6 +168,32 @@
 			interrupts = <25 3>;
 			status = "disabled";
 			label = "SPI_1";
+		};
+
+		adc1: adc@40012400 {
+			compatible = "st,stm32-adc";
+			reg = <0x40012400 0x400>;
+			clocks = <&rcc STM32_CLOCK_BUS_APB2 0x00000200>;
+			interrupts = <12 0>;
+			status = "disabled";
+			label = "ADC_1";
+			#io-channel-cells = <1>;
+		};
+
+		dma1: dma@40020000 {
+			compatible = "st,stm32-dma";
+			#dma-cells = <4>;
+			reg = <0x40020000 0x400>;
+			interrupts = <9 0 10 0 10 0 11 0 11 0 11 0 11 0>;
+			clocks = <&rcc STM32_CLOCK_BUS_AHB1 0x1>;
+			status = "disabled";
+			label = "DMA_1";
+		};
+
+		eeprom: eeprom@8080000{
+			compatible = "st,stm32-eeprom";
+			status = "disabled";
+			label = "EEPROM_0";
 		};
 	};
 };

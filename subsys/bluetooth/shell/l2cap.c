@@ -15,7 +15,7 @@
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
-#include <misc/byteorder.h>
+#include <sys/byteorder.h>
 #include <zephyr.h>
 
 #include <settings/settings.h>
@@ -38,8 +38,8 @@
 #define L2CAP_POLICY_WHITELIST		0x01
 #define L2CAP_POLICY_16BYTE_KEY		0x02
 
-NET_BUF_POOL_DEFINE(data_tx_pool, 1, DATA_MTU, BT_BUF_USER_DATA_MIN, NULL);
-NET_BUF_POOL_DEFINE(data_rx_pool, 1, DATA_MTU, BT_BUF_USER_DATA_MIN, NULL);
+NET_BUF_POOL_FIXED_DEFINE(data_tx_pool, 1, DATA_MTU, NULL);
+NET_BUF_POOL_FIXED_DEFINE(data_rx_pool, 1, DATA_MTU, NULL);
 
 static u8_t l2cap_policy;
 static struct bt_conn *l2cap_whitelist[CONFIG_BT_MAX_CONN];
@@ -55,6 +55,8 @@ struct l2ch {
 #define L2CH_WORK(_work) CONTAINER_OF(_work, struct l2ch, recv_work)
 #define L2CAP_CHAN(_chan) _chan->ch.chan
 
+static bool metrics;
+
 static int l2cap_recv_metrics(struct bt_l2cap_chan *chan, struct net_buf *buf)
 {
 	static u32_t len;
@@ -62,7 +64,7 @@ static int l2cap_recv_metrics(struct bt_l2cap_chan *chan, struct net_buf *buf)
 	u32_t delta;
 
 	delta = k_cycle_get_32() - cycle_stamp;
-	delta = SYS_CLOCK_HW_CYCLES_TO_NS(delta);
+	delta = (u32_t)k_cyc_to_ns_floor64(delta);
 
 	/* if last data rx-ed was greater than 1 second in the past,
 	 * reset the metrics.
@@ -94,11 +96,15 @@ static int l2cap_recv(struct bt_l2cap_chan *chan, struct net_buf *buf)
 {
 	struct l2ch *l2ch = L2CH_CHAN(chan);
 
+	if (metrics) {
+		return l2cap_recv_metrics(chan, buf);
+	}
+
 	shell_print(ctx_shell, "Incoming data channel %p len %u", chan,
 		    buf->len);
 
 	if (buf->len) {
-		hexdump(ctx_shell, buf->data, buf->len);
+		shell_hexdump(ctx_shell, buf->data, buf->len);
 	}
 
 	if (l2cap_recv_delay) {
@@ -114,6 +120,16 @@ static int l2cap_recv(struct bt_l2cap_chan *chan, struct net_buf *buf)
 	}
 
 	return 0;
+}
+
+static void l2cap_sent(struct bt_l2cap_chan *chan)
+{
+	shell_print(ctx_shell, "Outgoing data channel %p transmitted", chan);
+}
+
+static void l2cap_status(struct bt_l2cap_chan *chan, atomic_t *status)
+{
+	shell_print(ctx_shell, "Channel %p status %u", chan, status);
 }
 
 static void l2cap_connected(struct bt_l2cap_chan *chan)
@@ -133,16 +149,18 @@ static void l2cap_disconnected(struct bt_l2cap_chan *chan)
 static struct net_buf *l2cap_alloc_buf(struct bt_l2cap_chan *chan)
 {
 	/* print if metrics is disabled */
-	if (chan->ops->recv != l2cap_recv_metrics) {
+	if (!metrics) {
 		shell_print(ctx_shell, "Channel %p requires buffer", chan);
 	}
 
 	return net_buf_alloc(&data_rx_pool, K_FOREVER);
 }
 
-static struct bt_l2cap_chan_ops l2cap_ops = {
+static const struct bt_l2cap_chan_ops l2cap_ops = {
 	.alloc_buf	= l2cap_alloc_buf,
 	.recv		= l2cap_recv,
+	.sent		= l2cap_sent,
+	.status		= l2cap_status,
 	.connected	= l2cap_connected,
 	.disconnected	= l2cap_disconnected,
 };
@@ -350,9 +368,9 @@ static int cmd_metrics(const struct shell *shell, size_t argc, char *argv[])
 	action = argv[1];
 
 	if (!strcmp(action, "on")) {
-		l2cap_ops.recv = l2cap_recv_metrics;
+		metrics = true;
 	} else if (!strcmp(action, "off")) {
-		l2cap_ops.recv = l2cap_recv;
+		metrics = false;
 	} else {
 		shell_help(shell);
 		return 0;
@@ -402,7 +420,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(whitelist_cmds,
 );
 
 SHELL_STATIC_SUBCMD_SET_CREATE(l2cap_cmds,
-	SHELL_CMD_ARG(connect, NULL, "<psm>", cmd_connect, 1, 0),
+	SHELL_CMD_ARG(connect, NULL, "<psm>", cmd_connect, 2, 0),
 	SHELL_CMD_ARG(disconnect, NULL, HELP_NONE, cmd_disconnect, 1, 0),
 	SHELL_CMD_ARG(metrics, NULL, "<value on, off>", cmd_metrics, 2, 0),
 	SHELL_CMD_ARG(recv, NULL, "[delay (in miliseconds)", cmd_recv, 1, 1),
@@ -428,4 +446,3 @@ static int cmd_l2cap(const struct shell *shell, size_t argc, char **argv)
 
 SHELL_CMD_ARG_REGISTER(l2cap, &l2cap_cmds, "Bluetooth L2CAP shell commands",
 		       cmd_l2cap, 1, 1);
-

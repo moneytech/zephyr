@@ -9,7 +9,8 @@
 #include "hal/ccm.h"
 #include "hal/radio.h"
 
-#define LOG_MODULE_NAME bt_ctlr_llsw_nordic_lll_chan
+#define BT_DBG_ENABLED IS_ENABLED(CONFIG_BT_DEBUG_HCI_DRIVER)
+#define LOG_MODULE_NAME bt_ctlr_lll_chan
 #include "common/log.h"
 #include <soc.h>
 #include "hal/debug.h"
@@ -20,35 +21,6 @@ static u8_t chan_sel_remap(u8_t *chan_map, u8_t chan_index);
 static u16_t chan_prn(u16_t counter, u16_t chan_id);
 #endif /* CONFIG_BT_CTLR_CHAN_SEL_2 */
 #endif /* CONFIG_BT_CONN */
-
-void lll_chan_set(u32_t chan)
-{
-	switch (chan) {
-	case 37:
-		radio_freq_chan_set(2);
-		break;
-
-	case 38:
-		radio_freq_chan_set(26);
-		break;
-
-	case 39:
-		radio_freq_chan_set(80);
-		break;
-
-	default:
-		if (chan < 11) {
-			radio_freq_chan_set(4 + (chan * 2U));
-		} else if (chan < 40) {
-			radio_freq_chan_set(28 + ((chan - 11) * 2U));
-		} else {
-			LL_ASSERT(0);
-		}
-		break;
-	}
-
-	radio_whiten_iv_set(chan);
-}
 
 #if defined(CONFIG_BT_CONN)
 u8_t lll_chan_sel_1(u8_t *chan_use, u8_t hop, u16_t latency, u8_t *chan_map,

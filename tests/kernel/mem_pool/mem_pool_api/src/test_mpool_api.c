@@ -6,8 +6,8 @@
 
 #include <ztest.h>
 #include <irq_offload.h>
-#include "test_mpool.h"
 #include <kernel_internal.h>
+#include "test_mpool.h"
 
 /** TESTPOINT: Statically define and initialize a memory pool*/
 K_MEM_POOL_DEFINE(kmpool, BLK_SIZE_MIN, BLK_SIZE_MAX, BLK_NUM_MAX, BLK_ALIGN);
@@ -109,7 +109,7 @@ void test_mpool_alloc_size(void)
 		zassert_true(k_mem_pool_alloc(&kmpool, &block[i], size,
 					      K_NO_WAIT) == 0, NULL);
 		zassert_not_null(block[i].data, NULL);
-		zassert_true((u32_t)(block[i].data) % BLK_ALIGN == 0, NULL);
+		zassert_true((uintptr_t)(block[i].data) % BLK_ALIGN == 0, NULL);
 		i++;
 		size = size >> 2;
 	}
@@ -127,7 +127,7 @@ void test_mpool_alloc_size(void)
 		zassert_true(k_mem_pool_alloc(&kmpool, &block[i], size,
 					      K_NO_WAIT) == 0, NULL);
 		zassert_not_null(block[i].data, NULL);
-		zassert_true((u32_t)(block[i].data) % BLK_ALIGN == 0, NULL);
+		zassert_true((uintptr_t)(block[i].data) % BLK_ALIGN == 0, NULL);
 		i++;
 		size = size << 2;
 	}

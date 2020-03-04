@@ -33,8 +33,12 @@
 	};
 };
 
+&cpu0 {
+	clock-frequency = <48000000>;
+};
+
 &sercom0 {
-	status = "ok";
+	status = "okay";
 	compatible = "atmel,sam0-uart";
 	current-speed = <115200>;
 	rxpo = <3>;
@@ -42,7 +46,7 @@
 };
 
 &sercom2 {
-	status = "ok";
+	status = "okay";
 	compatible = "atmel,sam0-uart";
 	current-speed = <115200>;
 	rxpo = <1>;
@@ -51,7 +55,7 @@
 
 /* Drives the on-board DotStar LED */
 &sercom1 {
-	status = "ok";
+	status = "okay";
 	compatible = "atmel,sam0-spi";
 	dipo = <2>;
 	dopo = <0>;
@@ -85,8 +89,9 @@
 		};
 
 		/*
-		 * The final 16 KiB is reserved for the application
-		 * and is used by NFFS if enabled.
+		 * The final 16 KiB is reserved for the application.
+		 * Storage partition will be used by FCB/LittleFS/NVS
+		 * if enabled.
 		 */
 		storage_partition: partition@3c000 {
 			label = "storage";
@@ -96,5 +101,5 @@
 };
 
 &usb0 {
-	status = "ok";
+	status = "okay";
 };

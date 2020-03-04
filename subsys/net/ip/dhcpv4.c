@@ -150,14 +150,21 @@ static inline bool dhcpv4_add_sname(struct net_pkt *pkt)
 /* Create DHCPv4 message and add options as per message type */
 static struct net_pkt *dhcpv4_create_message(struct net_if *iface, u8_t type,
 					     const struct in_addr *ciaddr,
+					     const struct in_addr *src_addr,
 					     const struct in_addr *server_addr,
 					     bool server_id, bool requested_ip)
 {
 	NET_PKT_DATA_ACCESS_DEFINE(dhcp_access, struct dhcp_msg);
-	const struct in_addr src = INADDR_ANY_INIT;
+	const struct in_addr *addr;
 	size_t size = DHCPV4_MESSAGE_SIZE;
 	struct net_pkt *pkt;
 	struct dhcp_msg *msg;
+
+	if (src_addr == NULL) {
+		addr = net_ipv4_unspecified_address();
+	} else {
+		addr = src_addr;
+	}
 
 	if (server_id) {
 		size += DHCPV4_OLV_MSG_SERVER_ID;
@@ -176,7 +183,7 @@ static struct net_pkt *dhcpv4_create_message(struct net_if *iface, u8_t type,
 
 	net_pkt_set_ipv4_ttl(pkt, 0xFF);
 
-	if (net_ipv4_create(pkt, &src, server_addr) ||
+	if (net_ipv4_create(pkt, addr, server_addr) ||
 	    net_udp_create(pkt, htons(DHCPV4_CLIENT_PORT),
 			   htons(DHCPV4_SERVER_PORT))) {
 		goto fail;
@@ -247,6 +254,7 @@ static u32_t dhcpv4_send_request(struct net_if *iface)
 {
 	const struct in_addr *server_addr = net_ipv4_broadcast_address();
 	const struct in_addr *ciaddr = NULL;
+	const struct in_addr *src_addr = NULL;
 	bool with_server_id = false;
 	bool with_requested_ip = false;
 	struct net_pkt *pkt;
@@ -260,8 +268,8 @@ static u32_t dhcpv4_send_request(struct net_if *iface)
 	case NET_DHCPV4_SELECTING:
 	case NET_DHCPV4_BOUND:
 		/* Not possible */
-		NET_ASSERT_INFO(0, "Invalid state %s",
-			net_dhcpv4_state_name(iface->config.dhcpv4.state));
+		NET_ASSERT(0, "Invalid state %s",
+			   net_dhcpv4_state_name(iface->config.dhcpv4.state));
 		break;
 	case NET_DHCPV4_REQUESTING:
 		with_server_id = true;
@@ -273,6 +281,7 @@ static u32_t dhcpv4_send_request(struct net_if *iface)
 		ciaddr = &iface->config.dhcpv4.requested_ip;
 
 		/* UNICAST the DHCPREQUEST */
+		src_addr = ciaddr;
 		server_addr = &iface->config.dhcpv4.server_id;
 
 		/* RFC2131 4.4.5 Client MUST NOT include server
@@ -283,13 +292,14 @@ static u32_t dhcpv4_send_request(struct net_if *iface)
 		/* Since we have an address populate the ciaddr field.
 		 */
 		ciaddr = &iface->config.dhcpv4.requested_ip;
+		src_addr = ciaddr;
 
 		break;
 	}
 
 	pkt = dhcpv4_create_message(iface, DHCPV4_MSG_TYPE_REQUEST,
-				    ciaddr, server_addr, with_server_id,
-				    with_requested_ip);
+				    ciaddr, src_addr, server_addr,
+				    with_server_id, with_requested_ip);
 	if (!pkt) {
 		goto fail;
 	}
@@ -333,7 +343,7 @@ static u32_t dhcpv4_send_discover(struct net_if *iface)
 	iface->config.dhcpv4.xid++;
 
 	pkt = dhcpv4_create_message(iface, DHCPV4_MSG_TYPE_DISCOVER,
-				    NULL, net_ipv4_broadcast_address(),
+				    NULL, NULL, net_ipv4_broadcast_address(),
 				    false, false);
 	if (!pkt) {
 		goto fail;
@@ -646,6 +656,8 @@ static bool dhcpv4_parse_options(struct net_pkt *pkt,
 		}
 #if defined(CONFIG_DNS_RESOLVER)
 		case DHCPV4_OPTIONS_DNS_SERVER: {
+			int i;
+			struct dns_resolve_context *ctx;
 			struct sockaddr_in dns;
 			const struct sockaddr *dns_servers[] = {
 				(struct sockaddr *)&dns, NULL
@@ -671,11 +683,18 @@ static bool dhcpv4_parse_options(struct net_pkt *pkt,
 				return false;
 			}
 
-			dns.sin_family = AF_INET;
-			dns_resolve_close(dns_resolve_get_default());
+			ctx = dns_resolve_get_default();
+			for (i = 0; i < CONFIG_DNS_NUM_CONCUR_QUERIES; i++) {
+				if (!ctx->queries[i].cb) {
+					continue;
+				}
 
-			status = dns_resolve_init(dns_resolve_get_default(),
-						  NULL, dns_servers);
+				dns_resolve_cancel(ctx, ctx->queries[i].id);
+			}
+			dns_resolve_close(ctx);
+
+			dns.sin_family = AF_INET;
+			status = dns_resolve_init(ctx, NULL, dns_servers);
 			if (status < 0) {
 				NET_DBG("options_dns, failed to set "
 					"resolve address: %d", status);

@@ -4,6 +4,32 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+enum llcp {
+	LLCP_NONE,
+	LLCP_CONN_UPD,
+	LLCP_CHAN_MAP,
+
+	/*
+	 * LLCP_TERMINATE,
+	 * LLCP_FEATURE_EXCHANGE,
+	 * LLCP_VERSION_EXCHANGE,
+	 */
+
+#if defined(CONFIG_BT_CTLR_LE_ENC)
+	LLCP_ENCRYPTION,
+#endif /* CONFIG_BT_CTLR_LE_ENC */
+
+	LLCP_CONNECTION_PARAM_REQ,
+
+#if defined(CONFIG_BT_CTLR_LE_PING)
+	LLCP_PING,
+#endif /* CONFIG_BT_CTLR_LE_PING */
+
+#if defined(CONFIG_BT_CTLR_PHY)
+	LLCP_PHY_UPD,
+#endif /* CONFIG_BT_CTLR_PHY */
+};
+
 struct ll_conn {
 	struct evt_hdr  evt;
 	struct ull_hdr  ull;
@@ -22,19 +48,35 @@ struct ll_conn {
 	u16_t apto_expire;
 #endif /* CONFIG_BT_CTLR_LE_PING */
 
+#if defined(CONFIG_BT_CTLR_DATA_LENGTH)
+	u16_t default_tx_octets;
+
+#if defined(CONFIG_BT_CTLR_PHY)
+	u16_t default_tx_time;
+#endif /* CONFIG_BT_CTLR_PHY */
+#endif /* CONFIG_BT_CTLR_DATA_LENGTH */
+
 	union {
 		struct {
 			u8_t fex_valid:1;
 		} common;
 
+#if defined(CONFIG_BT_PERIPHERAL)
 		struct {
-			u8_t fex_valid:1;
+			u8_t  fex_valid:1;
+			u8_t  latency_cancel:1;
+			u8_t  sca:3;
+			u32_t force;
 			u32_t ticks_to_offset;
 		} slave;
+#endif /* CONFIG_BT_PERIPHERAL */
 
+#if defined(CONFIG_BT_CENTRAL)
 		struct {
 			u8_t fex_valid:1;
+			u8_t terminate_ack:1;
 		} master;
+#endif /* CONFIG_BT_CENTRAL */
 	};
 
 	u8_t llcp_req;
@@ -43,24 +85,13 @@ struct ll_conn {
 
 	union {
 		struct {
-			enum {
-				LLCP_CUI_STATE_INPROG,
-				LLCP_CUI_STATE_USE,
-				LLCP_CUI_STATE_SELECT
-			} state:2 __packed;
-			u8_t  is_internal:1;
-			u16_t interval;
-			u16_t latency;
-			u16_t timeout;
 			u16_t instant;
-			u32_t win_offset_us;
-			u8_t  win_size;
 			u16_t *pdu_win_offset;
 			u32_t ticks_anchor;
 		} conn_upd;
 
 		struct {
-			u8_t  initiate;
+			u8_t  initiate:1;
 			u8_t  chm[5];
 			u16_t instant;
 		} chan_map;
@@ -77,11 +108,12 @@ struct ll_conn {
 
 #if defined(CONFIG_BT_CTLR_LE_ENC)
 		struct {
-			u8_t  initiate;
+			enum {
+				LLCP_ENC_STATE_INPROG,
+				LLCP_ENC_STATE_INIT,
+				LLCP_ENC_STATE_LTK_WAIT,
+			} state:2 __packed;
 			u8_t  error_code;
-			u8_t  rand[8];
-			u8_t  ediv[2];
-			u8_t  ltk[16];
 			u8_t  skd[16];
 		} encryption;
 #endif /* CONFIG_BT_CTLR_LE_ENC */
@@ -89,9 +121,31 @@ struct ll_conn {
 
 	struct node_rx_pdu *llcp_rx;
 
-	u32_t llcp_features;
+	struct {
+		u8_t  req;
+		u8_t  ack;
+		enum {
+			LLCP_CUI_STATE_INPROG,
+			LLCP_CUI_STATE_USE,
+			LLCP_CUI_STATE_SELECT
+		} state:2 __packed;
+		u8_t  cmd:1;
+		u16_t interval;
+		u16_t latency;
+		u16_t timeout;
+		u32_t win_offset_us;
+		u8_t  win_size;
+	} llcp_cu;
 
 	struct {
+		u8_t  req;
+		u8_t  ack;
+		u32_t features;
+	} llcp_feature;
+
+	struct {
+		u8_t  req;
+		u8_t  ack;
 		u8_t  tx:1;
 		u8_t  rx:1;
 		u8_t  version_number;
@@ -109,6 +163,19 @@ struct ll_conn {
 			u8_t reason;
 		} node_rx;
 	} llcp_terminate;
+
+#if defined(CONFIG_BT_CTLR_LE_ENC)
+	struct {
+		u8_t req;
+		u8_t ack;
+		u8_t pause_rx:1;
+		u8_t pause_tx:1;
+		u8_t refresh:1;
+		u8_t ediv[2];
+		u8_t rand[8];
+		u8_t ltk[16];
+	} llcp_enc;
+#endif /* CONFIG_BT_CTLR_LE_ENC */
 
 #if defined(CONFIG_BT_CTLR_CONN_PARAM_REQ)
 	struct {
@@ -147,18 +214,26 @@ struct ll_conn {
 	struct {
 		u8_t  req;
 		u8_t  ack;
-		u8_t  state:2;
-#define LLCP_LENGTH_STATE_REQ        0
-#define LLCP_LENGTH_STATE_ACK_WAIT   1
-#define LLCP_LENGTH_STATE_RSP_WAIT   2
-#define LLCP_LENGTH_STATE_RESIZE     3
-		u8_t  pause_tx:1;
+		u8_t  state:3;
+#define LLCP_LENGTH_STATE_REQ                 0
+#define LLCP_LENGTH_STATE_REQ_ACK_WAIT        1
+#define LLCP_LENGTH_STATE_RSP_WAIT            2
+#define LLCP_LENGTH_STATE_RSP_ACK_WAIT        3
+#define LLCP_LENGTH_STATE_RESIZE              4
+#define LLCP_LENGTH_STATE_RESIZE_RSP          5
+#define LLCP_LENGTH_STATE_RESIZE_RSP_ACK_WAIT 6
 		u16_t rx_octets;
 		u16_t tx_octets;
 #if defined(CONFIG_BT_CTLR_PHY)
 		u16_t rx_time;
 		u16_t tx_time;
 #endif /* CONFIG_BT_CTLR_PHY */
+		struct {
+			u16_t tx_octets;
+#if defined(CONFIG_BT_CTLR_PHY)
+			u16_t tx_time;
+#endif /* CONFIG_BT_CTLR_PHY */
+		} cache;
 	} llcp_length;
 #endif /* CONFIG_BT_CTLR_DATA_LENGTH */
 
@@ -173,6 +248,7 @@ struct ll_conn {
 #define LLCP_PHY_STATE_UPD      3
 		u8_t tx:3;
 		u8_t rx:3;
+		u8_t pause_tx:1;
 		u8_t flags:1;
 		u8_t cmd:1;
 	} llcp_phy;
@@ -182,11 +258,10 @@ struct ll_conn {
 	u8_t phy_pref_rx:3;
 #endif /* CONFIG_BT_CTLR_PHY */
 
-#if defined(CONFIG_BT_CTLR_LE_ENC)
-	u8_t  pause_rx:1;
-	u8_t  pause_tx:1;
-	u8_t  refresh:1;
-#endif /* CONFIG_BT_CTLR_LE_ENC */
+#if defined(CONFIG_BT_CTLR_LLID_DATA_START_EMPTY)
+	/* Detect empty L2CAP start frame */
+	u8_t  start_empty:1;
+#endif /* CONFIG_BT_CTLR_LLID_DATA_START_EMPTY */
 
 	struct node_tx *tx_head;
 	struct node_tx *tx_ctrl;

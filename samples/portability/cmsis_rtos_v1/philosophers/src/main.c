@@ -34,10 +34,10 @@
 #if defined(CONFIG_STDOUT_CONSOLE)
 #include <stdio.h>
 #else
-#include <misc/printk.h>
+#include <sys/printk.h>
 #endif
 
-#include <misc/__assert.h>
+#include <sys/__assert.h>
 
 #include "phil_obj_abstract.h"
 
@@ -72,7 +72,7 @@ osSemaphoreId forks[NUM_PHIL];
 
 #define fork(x) (forks[x])
 
-#define STACK_SIZE 512
+#define STACK_SIZE CONFIG_CMSIS_THREAD_MAX_STACK_SIZE
 
 #if DEBUG_PRINTF
 #define PR_DEBUG printk
@@ -135,7 +135,7 @@ void philosopher(void const *id)
 	fork_t fork1;
 	fork_t fork2;
 
-	int my_id = (int)id;
+	int my_id = POINTER_TO_INT(id);
 
 	/* Djkstra's solution: always pick up the lowest numbered fork first */
 	if (is_last_philosopher(my_id)) {
@@ -186,7 +186,7 @@ static void start_threads(void)
 
 	for (int i = 0; i < NUM_PHIL; i++) {
 		int prio = new_prio(i);
-		id = osThreadCreate(osThread(philosopher), (void *)i);
+		id = osThreadCreate(osThread(philosopher), INT_TO_POINTER(i));
 		osThreadSetPriority(id, prio);
 	}
 }

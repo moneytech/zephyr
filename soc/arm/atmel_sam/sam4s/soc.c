@@ -18,7 +18,7 @@
 #include <init.h>
 #include <soc.h>
 #include <arch/cpu.h>
-#include <cortex_m/exc.h>
+#include <arch/arm/aarch32/cortex_m/cmsis.h>
 
 /**
  * @brief Setup various clock on SoC at boot time.
@@ -195,9 +195,6 @@ static int atmel_sam4s_init(struct device *arg)
 	ARG_UNUSED(arg);
 
 	key = irq_lock();
-
-	/* Clear all faults. */
-	z_clearfaults();
 
 	/*
 	 * Set FWS (Flash Wait State) value before increasing Master Clock

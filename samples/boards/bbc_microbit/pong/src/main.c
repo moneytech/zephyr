@@ -5,13 +5,13 @@
  */
 
 #include <zephyr.h>
-#include <misc/printk.h>
+#include <sys/printk.h>
 #include <board.h>
-#include <gpio.h>
+#include <drivers/gpio.h>
 #include <device.h>
 #include <string.h>
-#include <pwm.h>
-#include <misc/stack.h>
+#include <drivers/pwm.h>
+#include <debug/stack.h>
 
 #include <display/mb_display.h>
 
@@ -119,7 +119,7 @@ static enum sound_state {
 
 static inline void beep(int period)
 {
-	pwm_pin_set_usec(pwm, SOUND_PIN, period, period / 2);
+	pwm_pin_set_usec(pwm, SOUND_PIN, period, period / 2, 0);
 }
 
 static void sound_set(enum sound_state state)
@@ -395,7 +395,7 @@ static void button_pressed(struct device *dev, struct gpio_callback *cb,
 			   u32_t pins)
 {
 	/* Filter out spurious presses */
-	if (pins & BIT(SW0_GPIO_PIN)) {
+	if (pins & BIT(DT_ALIAS_SW0_GPIOS_PIN)) {
 		printk("A pressed\n");
 		if (k_uptime_delta(&a_timestamp) < K_MSEC(100)) {
 			printk("Too quick A presses\n");
@@ -423,7 +423,7 @@ static void button_pressed(struct device *dev, struct gpio_callback *cb,
 		return;
 	}
 
-	if (pins & BIT(SW0_GPIO_PIN)) {
+	if (pins & BIT(DT_ALIAS_SW0_GPIOS_PIN)) {
 		if (select) {
 			pong_select_change();
 			return;
@@ -483,23 +483,27 @@ void pong_remote_lost(void)
 
 static void configure_buttons(void)
 {
-	static struct gpio_callback button_cb;
+	static struct gpio_callback button_cb_data;
 	struct device *gpio;
 
-	gpio = device_get_binding(SW0_GPIO_CONTROLLER);
+	gpio = device_get_binding(DT_ALIAS_SW0_GPIOS_CONTROLLER);
 
-	gpio_pin_configure(gpio, SW0_GPIO_PIN,
-			   (GPIO_DIR_IN | GPIO_INT | GPIO_INT_EDGE |
-			    GPIO_INT_ACTIVE_LOW));
-	gpio_pin_configure(gpio, SW1_GPIO_PIN,
-			   (GPIO_DIR_IN | GPIO_INT | GPIO_INT_EDGE |
-			    GPIO_INT_ACTIVE_LOW));
-	gpio_init_callback(&button_cb, button_pressed,
-			   BIT(SW0_GPIO_PIN) | BIT(SW1_GPIO_PIN));
-	gpio_add_callback(gpio, &button_cb);
+	gpio_pin_configure(gpio, DT_ALIAS_SW0_GPIOS_PIN,
+			   DT_ALIAS_SW0_GPIOS_FLAGS | GPIO_INPUT);
+	gpio_pin_configure(gpio, DT_ALIAS_SW1_GPIOS_PIN,
+			   DT_ALIAS_SW1_GPIOS_FLAGS | GPIO_INPUT);
 
-	gpio_pin_enable_callback(gpio, SW0_GPIO_PIN);
-	gpio_pin_enable_callback(gpio, SW1_GPIO_PIN);
+	gpio_pin_interrupt_configure(gpio, DT_ALIAS_SW0_GPIOS_PIN,
+				     GPIO_INT_EDGE_TO_ACTIVE);
+
+	gpio_pin_interrupt_configure(gpio, DT_ALIAS_SW1_GPIOS_PIN,
+				     GPIO_INT_EDGE_TO_ACTIVE);
+
+	gpio_init_callback(&button_cb_data, button_pressed,
+			   BIT(DT_ALIAS_SW0_GPIOS_PIN) |
+			   BIT(DT_ALIAS_SW1_GPIOS_PIN));
+
+	gpio_add_callback(gpio, &button_cb_data);
 }
 
 void main(void)
@@ -510,7 +514,7 @@ void main(void)
 
 	k_delayed_work_init(&refresh, game_refresh);
 
-	pwm = device_get_binding(CONFIG_PWM_NRF5_SW_0_DEV_NAME);
+	pwm = device_get_binding(DT_INST_0_NORDIC_NRF_SW_PWM_LABEL);
 
 	ble_init();
 

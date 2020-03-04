@@ -12,8 +12,8 @@
 
 #include <kernel.h>
 
-#include <i2c.h>
-#include <pwm.h>
+#include <drivers/i2c.h>
+#include <drivers/pwm.h>
 
 #include "pwm_pca9685.h"
 
@@ -49,10 +49,11 @@ static inline int has_i2c_master(struct device *dev)
 		(struct pwm_pca9685_drv_data * const)dev->driver_data;
 	struct device * const i2c_master = drv_data->i2c_master;
 
-	if (i2c_master)
+	if (i2c_master) {
 		return 1;
-	else
+	} else {
 		return 0;
+	}
 }
 
 /*
@@ -60,7 +61,8 @@ static inline int has_i2c_master(struct device *dev)
  * value to pulse_count
  */
 static int pwm_pca9685_pin_set_cycles(struct device *dev, u32_t pwm,
-				      u32_t period_count, u32_t pulse_count)
+				      u32_t period_count, u32_t pulse_count,
+				      pwm_flags_t flags)
 {
 	const struct pwm_pca9685_config * const config =
 		dev->config->config_info;
@@ -73,6 +75,11 @@ static int pwm_pca9685_pin_set_cycles(struct device *dev, u32_t pwm,
 	ARG_UNUSED(period_count);
 	if (!has_i2c_master(dev)) {
 		return -EINVAL;
+	}
+
+	if (flags) {
+		/* PWM polarity not supported (yet?) */
+		return -ENOTSUP;
 	}
 
 	if (pwm > MAX_PWM_OUT) {

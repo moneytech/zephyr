@@ -8,8 +8,8 @@
 #define ZEPHYR_DRIVERS_SENSOR_MPU6050_MPU6050_H_
 
 #include <device.h>
-#include <gpio.h>
-#include <misc/util.h>
+#include <drivers/gpio.h>
+#include <sys/util.h>
 #include <zephyr/types.h>
 
 #define MPU6050_REG_CHIP_ID		0x75
@@ -50,6 +50,7 @@ struct mpu6050_data {
 	u16_t gyro_sensitivity_x10;
 
 #ifdef CONFIG_MPU6050_TRIGGER
+	struct device *dev;
 	struct device *gpio;
 	struct gpio_callback gpio_cb;
 
@@ -62,9 +63,18 @@ struct mpu6050_data {
 	struct k_sem gpio_sem;
 #elif defined(CONFIG_MPU6050_TRIGGER_GLOBAL_THREAD)
 	struct k_work work;
-	struct device *dev;
 #endif
 
+#endif /* CONFIG_MPU6050_TRIGGER */
+};
+
+struct mpu6050_config {
+	const char *i2c_label;
+	u16_t i2c_addr;
+#ifdef CONFIG_MPU6050_TRIGGER
+	u8_t int_pin;
+	u8_t int_flags;
+	const char *int_label;
 #endif /* CONFIG_MPU6050_TRIGGER */
 };
 

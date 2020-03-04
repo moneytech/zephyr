@@ -7,7 +7,7 @@
 #include <stdlib.h>
 
 #include <zephyr.h>
-#include <flash.h>
+#include <drivers/flash.h>
 #include <shell/shell.h>
 
 #define PR_SHELL(shell, fmt, ...)				\
@@ -166,5 +166,3 @@ SHELL_STATIC_SUBCMD_SET_CREATE(sub_mpu,
 	SHELL_SUBCMD_SET_END /* Array terminated. */
 );
 SHELL_CMD_REGISTER(mpu, &sub_mpu, "MPU related commands.", NULL);
-
-

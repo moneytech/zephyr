@@ -6,7 +6,7 @@
 
 #include <soc.h>
 
-#include "pwm.h"
+#include <drivers/pwm.h>
 #include <nrf_peripherals.h>
 
 #define LOG_LEVEL CONFIG_PWM_LOG_LEVEL
@@ -14,13 +14,13 @@
 LOG_MODULE_REGISTER(pwm_nrf5_sw);
 
 /* One compare channel is needed to set the PWM period, hence +1. */
-#if ((DT_NORDIC_NRF_SW_PWM_0_CHANNEL_COUNT + 1) > \
+#if ((DT_INST_0_NORDIC_NRF_SW_PWM_CHANNEL_COUNT + 1) > \
 	(_CONCAT( \
-		_CONCAT(TIMER, DT_NORDIC_NRF_SW_PWM_0_TIMER_INSTANCE), \
+		_CONCAT(TIMER, DT_INST_0_NORDIC_NRF_SW_PWM_TIMER_INSTANCE), \
 		_CC_NUM)))
 #error "Invalid number of PWM channels configured."
 #endif
-#define PWM_0_MAP_SIZE DT_NORDIC_NRF_SW_PWM_0_CHANNEL_COUNT
+#define PWM_0_MAP_SIZE DT_INST_0_NORDIC_NRF_SW_PWM_CHANNEL_COUNT
 
 struct pwm_config {
 	NRF_TIMER_Type *timer;
@@ -87,7 +87,8 @@ static u8_t pwm_channel_map(struct pwm_data *data, u8_t map_size,
 }
 
 static int pwm_nrf5_sw_pin_set(struct device *dev, u32_t pwm,
-			       u32_t period_cycles, u32_t pulse_cycles)
+			       u32_t period_cycles, u32_t pulse_cycles,
+			       pwm_flags_t flags)
 {
 	struct pwm_config *config;
 	NRF_TIMER_Type *timer;
@@ -100,6 +101,11 @@ static int pwm_nrf5_sw_pin_set(struct device *dev, u32_t pwm,
 	config = (struct pwm_config *)dev->config->config_info;
 	timer = config->timer;
 	data = dev->driver_data;
+
+	if (flags) {
+		/* PWM polarity not supported (yet?) */
+		return -ENOTSUP;
+	}
 
 	/* check if requested period is allowed while other channels are
 	 * active.
@@ -244,26 +250,18 @@ static int pwm_nrf5_sw_init(struct device *dev)
 	return 0;
 }
 
-/* NOTE: nRF51x BLE controller use HW tIFS hence using only PPI channels 1-6.
- * nRF52x BLE controller implements SW tIFS and uses addition 6 PPI channels.
- * Also, nRF52x requires one additional PPI channel for decryption rate boost.
- * Hence, nRF52x BLE controller uses PPI channels 1-13.
- *
- * NOTE: If PA/LNA feature is enabled for nRF52x, then additional two PPI
- * channels 14-15 are used by BLE controller.
- */
 static const struct pwm_config pwm_nrf5_sw_0_config = {
-	.timer = _CONCAT(NRF_TIMER, DT_NORDIC_NRF_SW_PWM_0_TIMER_INSTANCE),
-	.ppi_base = DT_NORDIC_NRF_SW_PWM_0_PPI_BASE,
-	.gpiote_base = DT_NORDIC_NRF_SW_PWM_0_GPIOTE_BASE,
+	.timer = _CONCAT(NRF_TIMER, DT_INST_0_NORDIC_NRF_SW_PWM_TIMER_INSTANCE),
+	.ppi_base = DT_INST_0_NORDIC_NRF_SW_PWM_PPI_BASE,
+	.gpiote_base = DT_INST_0_NORDIC_NRF_SW_PWM_GPIOTE_BASE,
 	.map_size = PWM_0_MAP_SIZE,
-	.prescaler = DT_NORDIC_NRF_SW_PWM_0_CLOCK_PRESCALER,
+	.prescaler = DT_INST_0_NORDIC_NRF_SW_PWM_CLOCK_PRESCALER,
 };
 
 static struct pwm_data pwm_nrf5_sw_0_data;
 
 DEVICE_AND_API_INIT(pwm_nrf5_sw_0,
-		    CONFIG_PWM_NRF5_SW_0_DEV_NAME,
+		    DT_INST_0_NORDIC_NRF_SW_PWM_LABEL,
 		    pwm_nrf5_sw_init,
 		    &pwm_nrf5_sw_0_data,
 		    &pwm_nrf5_sw_0_config,

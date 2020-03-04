@@ -11,7 +11,8 @@
 #include <logging/log_core.h>
 #include <logging/log_msg.h>
 #include <logging/log_output.h>
-#include "posix_trace.h"
+#include <irq.h>
+#include <arch/posix/posix_trace.h>
 
 #define _STDOUT_BUF_SIZE 256
 static char stdout_buff[_STDOUT_BUF_SIZE];

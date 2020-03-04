@@ -66,14 +66,12 @@ struct log_source_dynamic_data {
  * @brief Macro for initializing a pointer to the logger instance.
  */
 
-/** @} */
-
 #ifdef CONFIG_LOG
 
 #define LOG_INSTANCE_FULL_NAME(_module_name, _inst_name) \
 	UTIL_CAT(_module_name, UTIL_CAT(_, _inst_name))
 
-#if CONFIG_LOG_RUNTIME_FILTERING
+#if defined(CONFIG_LOG_RUNTIME_FILTERING)
 #define LOG_INSTANCE_PTR_DECLARE(_name)	\
 	struct log_source_dynamic_data *_name
 

@@ -17,25 +17,14 @@
 
 #define INFO(fmt, ...) printk(fmt, ##__VA_ARGS__)
 
-/* ARM is a special case, in that k_thread_abort() does indeed return
- * instead of calling z_swap() directly. The PendSV exception is queued
- * and immediately fires upon completing the exception path; the faulting
- * thread is never run again.
- */
-#if !(defined(CONFIG_ARM) || defined(CONFIG_ARC))
-FUNC_NORETURN
-#endif
-void z_SysFatalErrorHandler(unsigned int reason, const NANO_ESF *pEsf)
+void k_sys_fatal_error_handler(unsigned int reason, const z_arch_esf_t *pEsf)
 {
 	INFO("Caught system error -- reason %d\n", reason);
 	ztest_test_pass();
-#if !(defined(CONFIG_ARM) || defined(CONFIG_ARC))
-	CODE_UNREACHABLE;
-#endif
 }
 
 #ifdef CONFIG_CPU_CORTEX_M
-#include <arch/arm/cortex_m/cmsis.h>
+#include <arch/arm/aarch32/cortex_m/cmsis.h>
 /* Must clear LSB of function address to access as data. */
 #define FUNC_TO_PTR(x) (void *)((uintptr_t)(x) & ~0x1)
 /* Must set LSB of function address to call in Thumb mode. */

@@ -7,7 +7,7 @@
 #include <init.h>
 #include <soc.h>
 #include <dt-bindings/rdc/imx_rdc.h>
-#include <cortex_m/exc.h>
+#include <arch/arm/aarch32/cortex_m/cmsis.h>
 #include "wdog_imx.h"
 
 /* Initialize Resource Domain Controller. */
@@ -186,8 +186,6 @@ static int mcimx6x_m4_init(struct device *arg)
 
 	/* Initialize Cache */
 	SOC_CacheInit();
-
-	z_clearfaults();
 
 	/* Initialize clock */
 	SOC_ClockInit();

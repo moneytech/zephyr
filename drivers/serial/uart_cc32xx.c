@@ -6,7 +6,7 @@
 
 #include <kernel.h>
 #include <arch/cpu.h>
-#include <uart.h>
+#include <drivers/uart.h>
 
 /* Driverlib includes */
 #include <inc/hw_types.h>
@@ -38,7 +38,7 @@ static void uart_cc32xx_isr(void *arg);
 
 static const struct uart_device_config uart_cc32xx_dev_cfg_0 = {
 	.base = (void *)DT_TI_CC32XX_UART_4000C000_BASE_ADDRESS,
-	.sys_clk_freq = CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC,
+	.sys_clk_freq = DT_TI_CC32XX_UART_4000C000_CLOCKS_CLOCK_FREQUENCY,
 };
 
 static struct uart_cc32xx_dev_data_t uart_cc32xx_dev_data_0 = {
@@ -120,7 +120,7 @@ static int uart_cc32xx_err_check(struct device *dev)
 	/* Map cc32xx SDK uart.h defines to zephyr uart.h defines */
 	z_err = ((cc32xx_errs & UART_RXERROR_OVERRUN) ?
 		  UART_ERROR_OVERRUN : 0) |
-		((cc32xx_errs & UART_RXERROR_BREAK) ? UART_ERROR_BREAK : 0) |
+		((cc32xx_errs & UART_RXERROR_BREAK) ? UART_BREAK : 0) |
 		((cc32xx_errs & UART_RXERROR_PARITY) ? UART_ERROR_PARITY : 0) |
 		((cc32xx_errs & UART_RXERROR_FRAMING) ? UART_ERROR_FRAMING : 0);
 

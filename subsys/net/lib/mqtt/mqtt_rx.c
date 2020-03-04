@@ -120,6 +120,13 @@ static int mqtt_handle_packet(struct mqtt_client *client,
 	case MQTT_PKT_TYPE_PINGRSP:
 		MQTT_TRC("[CID %p]: Received MQTT_PKT_TYPE_PINGRSP!", client);
 
+		if (client->unacked_ping <= 0) {
+			MQTT_TRC("Unexpected PINGRSP");
+			client->unacked_ping = 0;
+		} else {
+			client->unacked_ping--;
+		}
+
 		/* No notification of Ping response to application. */
 		notify_event = false;
 		break;
@@ -158,7 +165,7 @@ static int mqtt_read_message_chunk(struct mqtt_client *client,
 		return -ENOMEM;
 	}
 
-	len = mqtt_transport_read(client, buf->end, remaining);
+	len = mqtt_transport_read(client, buf->end, remaining, false);
 	if (len < 0) {
 		MQTT_TRC("[CID %p]: Transport read error: %d", client, len);
 		return len;

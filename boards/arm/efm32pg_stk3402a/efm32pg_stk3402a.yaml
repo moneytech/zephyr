@@ -11,6 +11,8 @@ toolchain:
 supported:
   - i2c
   - gpio
+  - nvs
+  - watchdog
 testing:
   ignore_tags:
     - net

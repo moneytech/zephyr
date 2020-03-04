@@ -6,12 +6,14 @@
 
 #include <zephyr.h>
 #include <device.h>
+#include <init.h>
 #include <ztest.h>
-#include <misc/printk.h>
+#include <sys/printk.h>
 
 
 #define DUMMY_PORT_1    "dummy"
 #define DUMMY_PORT_2    "dummy_driver"
+#define BAD_DRIVER	"bad_driver"
 
 /**
  * @brief Test cases to verify device objects
@@ -46,6 +48,12 @@ void test_dummy_device(void)
 
 	device_busy_set(dev);
 	device_busy_clear(dev);
+
+	/* device_get_binding() returns false for device object
+	 * with failed init.
+	 */
+	dev = device_get_binding(BAD_DRIVER);
+	zassert_true((dev == NULL), NULL);
 }
 
 /**
@@ -81,6 +89,81 @@ static void test_bogus_dynamic_name(void)
 	snprintk(name, sizeof(name), "ANOTHER_BOGUS_NAME");
 	mux = device_get_binding(name);
 	zassert_true(mux == NULL, NULL);
+}
+
+static struct init_record {
+	bool pre_kernel;
+	bool is_in_isr;
+	bool is_pre_kernel;
+} init_records[4];
+
+static struct init_record *rp = init_records;
+
+static int add_init_record(bool pre_kernel)
+{
+	rp->pre_kernel = pre_kernel;
+	rp->is_pre_kernel = k_is_pre_kernel();
+	rp->is_in_isr = k_is_in_isr();
+	++rp;
+	return 0;
+}
+
+static int pre1_fn(struct device *dev)
+{
+	return add_init_record(true);
+}
+
+static int pre2_fn(struct device *dev)
+{
+	return add_init_record(true);
+}
+
+static int post_fn(struct device *dev)
+{
+	return add_init_record(false);
+}
+
+static int app_fn(struct device *dev)
+{
+	return add_init_record(false);
+}
+
+SYS_INIT(pre1_fn, PRE_KERNEL_1, 0);
+SYS_INIT(pre2_fn, PRE_KERNEL_2, 0);
+SYS_INIT(post_fn, POST_KERNEL, 0);
+SYS_INIT(app_fn, APPLICATION, 0);
+
+/**
+ * @brief Test detection of initialization before kernel services available.
+ *
+ * Confirms check is correct.
+ *
+ * @see k_is_pre_kernel()
+ */
+void test_pre_kernel_detection(void)
+{
+	struct init_record *rpe = rp;
+
+	zassert_equal(rp - init_records, 4U,
+		      "bad record count");
+	rp = init_records;
+	while ((rp < rpe) && rp->pre_kernel) {
+		zassert_equal(rp->is_in_isr, false,
+			      "rec %zu isr", rp - init_records);
+		zassert_equal(rp->is_pre_kernel, true,
+			      "rec %zu pre-kernel", rp - init_records);
+		++rp;
+	}
+	zassert_equal(rp - init_records, 2U,
+		      "bad pre-kernel count");
+
+	while (rp < rpe) {
+		zassert_equal(rp->is_in_isr, false,
+			      "rec %zu isr", rp - init_records);
+		zassert_equal(rp->is_pre_kernel, false,
+			      "rec %zu post-kernel", rp - init_records);
+		++rp;
+	}
 }
 
 #ifdef CONFIG_DEVICE_POWER_MANAGEMENT
@@ -169,7 +252,8 @@ void test_main(void)
 			 ztest_unit_test(test_dummy_device_pm),
 			 ztest_unit_test(build_suspend_device_list),
 			 ztest_unit_test(test_dummy_device),
-			 ztest_unit_test(test_bogus_dynamic_name),
-			 ztest_unit_test(test_dynamic_name));
+			 ztest_unit_test(test_pre_kernel_detection),
+			 ztest_user_unit_test(test_bogus_dynamic_name),
+			 ztest_user_unit_test(test_dynamic_name));
 	ztest_run_test_suite(device);
 }
